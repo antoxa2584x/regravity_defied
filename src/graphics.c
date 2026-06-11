@@ -141,7 +141,7 @@ void draw_sprite(int x, int y, const color_t* data, int w, int h) {
     }
 }
 
-void fill_circle(int cx, int cy, int r, color_t color) {
+IWRAM_FN void fill_circle(int cx, int cy, int r, color_t color) {
     for (int dy = -r; dy <= r; dy++) {
         for (int dx = -r; dx <= r; dx++) {
             if (dx * dx + dy * dy <= r * r) put_pixel(cx + dx, cy + dy, color);
@@ -149,64 +149,57 @@ void fill_circle(int cx, int cy, int r, color_t color) {
     }
 }
 
-void draw_line(int x1, int y1, int x2, int y2, color_t color) {
+IWRAM_FN void draw_line(int x1, int y1, int x2, int y2, color_t color) {
+    color_t* fb = (color_t*)VRAM;
+
     // Fast path for vertical lines
     if (x1 == x2) {
+        if ((unsigned)x1 >= (unsigned)SCREEN_WIDTH) return;
         if (y1 > y2) { int t = y1; y1 = y2; y2 = t; }
         if (y1 < 0) y1 = 0;
         if (y2 >= SCREEN_HEIGHT) y2 = SCREEN_HEIGHT - 1;
-        for (int y = y1; y <= y2; y++) {
-            ((color_t*)VRAM)[y * SCREEN_WIDTH + x1] = color;
-        }
+        color_t* p = fb + y1 * SCREEN_WIDTH + x1;
+        for (int y = y1; y <= y2; y++, p += SCREEN_WIDTH)
+            *p = color;
         return;
     }
 
-    // Fast path for horizontal lines
+    // Fast path for horizontal lines (32-bit word writes)
     if (y1 == y2) {
+        if ((unsigned)y1 >= (unsigned)SCREEN_HEIGHT) return;
         if (x1 > x2) { int t = x1; x1 = x2; x2 = t; }
         if (x1 < 0) x1 = 0;
         if (x2 >= SCREEN_WIDTH) x2 = SCREEN_WIDTH - 1;
-        
         int w = x2 - x1 + 1;
         if (w <= 0) return;
-        
-        color_t* line = &((color_t*)VRAM)[y1 * SCREEN_WIDTH + x1];
-        uint32_t c32 = color | (color << 16);
+        color_t* line = fb + y1 * SCREEN_WIDTH + x1;
+        uint32_t c32 = color | ((uint32_t)color << 16);
         int i = 0;
-        if (((uintptr_t)line & 2) && i < w) {
-            line[i++] = color;
-        }
+        if (((uintptr_t)line & 2) && i < w) line[i++] = color;
         uint32_t* line32 = (uint32_t*)&line[i];
         int w32 = (w - i) / 2;
-        for (int k = 0; k < w32; k++) {
-            line32[k] = c32;
-        }
+        for (int k = 0; k < w32; k++) line32[k] = c32;
         i += w32 * 2;
-        if (i < w) {
-            line[i] = color;
-        }
+        if (i < w) line[i] = color;
         return;
     }
 
+    // Bresenham: incremental pointer avoids per-pixel multiply,
+    // unsigned cast folds the 0<=x<W and 0<=y<H checks into one compare each.
     int dx = abs(x2 - x1);
     int dy = abs(y2 - y1);
     int sx = (x1 < x2) ? 1 : -1;
     int sy = (y1 < y2) ? 1 : -1;
     int err = dx - dy;
+    int step_y = sy * SCREEN_WIDTH;
+    color_t* p = fb + y1 * SCREEN_WIDTH + x1;
 
     while (1) {
-        if (x1 >= 0 && x1 < SCREEN_WIDTH && y1 >= 0 && y1 < SCREEN_HEIGHT) {
-            ((color_t*)VRAM)[y1 * SCREEN_WIDTH + x1] = color;
-        }
+        if ((unsigned)x1 < (unsigned)SCREEN_WIDTH && (unsigned)y1 < (unsigned)SCREEN_HEIGHT)
+            *p = color;
         if (x1 == x2 && y1 == y2) break;
         int e2 = 2 * err;
-        if (e2 > -dy) {
-            err -= dy;
-            x1 += sx;
-        }
-        if (e2 < dx) {
-            err += dx;
-            y1 += sy;
-        }
+        if (e2 > -dy) { err -= dy; x1 += sx; p += sx; }
+        if (e2 < dx)  { err += dx; y1 += sy; p += step_y; }
     }
 }

@@ -81,7 +81,7 @@ void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finis
 
 // Fast magnitude approximation (matches ref GamePhysics::getSmthLikeMaxAbs):
 // ~0.983*max(|x|,|y|) + 0.431*min(|x|,|y|)
-static int fast_hypot(int x, int y) {
+IWRAM_FN static int fast_hypot(int x, int y) {
     int ax = x < 0 ? -x : x;
     int ay = y < 0 ? -y : y;
     int mx = ax > ay ? ax : ay;
@@ -97,7 +97,7 @@ static int fast_hypot(int x, int y) {
 
 // Project an internal track point to its near (riding) and far (ribbon) screen
 // coordinates. Returns near in (*nx,*ny), far in (*fx,*fy).
-static void project_point(int32_t ix, int32_t iy, int ox, int oy,
+IWRAM_FN static void project_point(int32_t ix, int32_t iy, int ox, int oy,
                           int* nx, int* ny, int* fx, int* fy) {
     int sx = get_pixel_coord(ix) + ox;
     int sy = oy - get_pixel_coord(iy);
@@ -113,7 +113,7 @@ static void project_point(int32_t ix, int32_t iy, int ox, int oy,
     *fy = sy + ddy * RIBBON_DEPTH / m;
 }
 
-static int seg_offscreen(int x1, int x2) {
+IWRAM_FN static int seg_offscreen(int x1, int x2) {
     return (x1 < -RIBBON_DEPTH && x2 < -RIBBON_DEPTH) ||
            (x1 >= SCREEN_WIDTH + RIBBON_DEPTH && x2 >= SCREEN_WIDTH + RIBBON_DEPTH);
 }
@@ -132,7 +132,7 @@ static void draw_flag(int nx, int ny, int fx, int fy, int finish) {
     draw_sprite(px + 1, py - 28, frame, FLAG_W, FLAG_H);
 }
 
-void draw_track(const uint8_t* data, int cam_x, int cam_y) {
+IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
     const uint8_t* p = data;
     if (*p != 0x33) return;
     p++;
