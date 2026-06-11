@@ -47,6 +47,16 @@ clear_bss:
     strlo r0, [r1], #4
     blo clear_bss
 
+    @ Copy IWRAM code (physics hot path) from ROM to IWRAM
+    ldr r0, =__iwram_code_load
+    ldr r1, =__iwram_code_start_sym
+    ldr r2, =__iwram_code_end_sym
+copy_iwram:
+    cmp r1, r2
+    ldrlo r3, [r0], #4
+    strlo r3, [r1], #4
+    blo copy_iwram
+
     ldr r0, =main
     bx r0
 

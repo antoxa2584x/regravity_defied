@@ -33,15 +33,20 @@ static void format_time(int frames, char* buf) {
 }
 
 int main() {
+    // Enable ROM prefetch buffer: sequential ROM reads drop from 4 to 1 wait state.
+    // Bit 14 = prefetch enable; rest are sensible wait state values.
+    REG_WAITCNT = 0x4317;
+
     REG_DISPCNT = MODE3 | BG2_ENABLE;
 
     const uint8_t* mrg = _binary_levels_mrg_start;
-    
+
     int level_idx = 0;
     int track_idx = 0;
     int cam_x = 0, cam_y = 0;
     int update = 1;
     enum State state = STATE_MENU_HARDNESS;
+    const uint8_t* cur_track = NULL; // cached; set when entering STATE_GAME
     
     uint16_t prev_keys = 0;
     int timer = 0;
@@ -86,28 +91,25 @@ int main() {
             }
             if (keys_pressed & (KEY_START | KEY_A)) {
                 state = STATE_GAME;
-                const uint8_t* track_data = get_track_data(mrg, level_idx, track_idx);
-                physics_set_league(level_idx); // 0=100cc, 1=175cc, 2=220cc
-                init_bike(&player_bike, track_data);
-                // Immediately update physics once to snap to ground if close
-                update_physics(&player_bike, track_data, 0);
+                cur_track = get_track_data(mrg, level_idx, track_idx);
+                physics_set_league(level_idx);
+                init_bike(&player_bike, cur_track);
+                update_physics(&player_bike, cur_track, 0);
                 cam_x = get_pixel_coord(player_bike.x);
                 cam_y = get_pixel_coord(player_bike.y);
                 update = 1;
                 timer = 0;
-                get_track_flags(track_data, NULL, NULL, &finish_x, NULL);
+                get_track_flags(cur_track, NULL, NULL, &finish_x, NULL);
             }
             if (keys_pressed & (KEY_SELECT | KEY_B)) {
                 state = STATE_MENU_HARDNESS;
                 update = 1;
             }
         } else if (state == STATE_GAME) {
-            update_physics(&player_bike, get_track_data(mrg, level_idx, track_idx), keys);
+            update_physics(&player_bike, cur_track, keys);
             if (player_bike.crash) {
-                // Restart on crash
-                const uint8_t* track_data = get_track_data(mrg, level_idx, track_idx);
-                init_bike(&player_bike, track_data);
-                update_physics(&player_bike, track_data, 0);
+                init_bike(&player_bike, cur_track);
+                update_physics(&player_bike, cur_track, 0);
                 timer = 0;
             }
             cam_x = get_pixel_coord(player_bike.x);
@@ -120,7 +122,7 @@ int main() {
                 finish_time = timer;
             }
 
-            if (keys_pressed & (KEY_SELECT | KEY_B)) {
+            if (keys_pressed & KEY_SELECT) {
                 state = STATE_MENU_TRACK;
                 update = 1;
             }
@@ -187,8 +189,7 @@ int main() {
                     track_info++;
                 }
             } else if (state == STATE_GAME || state == STATE_TRACK_VIEW || state == STATE_FINISHED) {
-                const uint8_t* track_data = get_track_data(mrg, level_idx, track_idx);
-                draw_track(track_data, cam_x, cam_y);
+                draw_track(cur_track, cam_x, cam_y);
                 if (state == STATE_GAME || state == STATE_FINISHED) {
                     draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
                 }

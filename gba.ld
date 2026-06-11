@@ -12,6 +12,7 @@ SECTIONS {
         KEEP(*(.text.prologue))
         *(.text*)
         *(.rodata*)
+        . = ALIGN(4);   /* pad so .data and .iwram.text LMAs are word-aligned */
     } > rom
 
     .data : {
@@ -25,7 +26,19 @@ SECTIONS {
         __bss_end = .;
     } > iwram
 
+    /* Hot physics code placed in IWRAM (0 wait states) after BSS.
+       LMA in ROM (after .data); copied to IWRAM at boot by crt0.s. */
+    .iwram.text : {
+        __iwram_code_start = .;
+        *(.iwram.text*)
+        __iwram_code_end = .;
+    } > iwram AT > rom
+
     __data_load = LOADADDR(.data);
     __data_start = ADDR(.data);
     __data_end = ADDR(.data) + SIZEOF(.data);
+
+    __iwram_code_load = LOADADDR(.iwram.text);
+    __iwram_code_start_sym = ADDR(.iwram.text);
+    __iwram_code_end_sym = ADDR(.iwram.text) + SIZEOF(.iwram.text);
 }

@@ -63,12 +63,15 @@ const uint8_t font5x7[] = {
     0x61, 0x51, 0x49, 0x45, 0x43, // Z
 };
 
+// Source word for DMA fill — must live in RAM (IWRAM via .bss).
+static uint32_t dma_fill_word;
+
 void clear_screen(color_t color) {
-    uint32_t* vram32 = (uint32_t*)VRAM;
-    uint32_t c32 = color | (color << 16);
-    for (int i = 0; i < (SCREEN_WIDTH * SCREEN_HEIGHT) / 2; i++) {
-        vram32[i] = c32;
-    }
+    dma_fill_word = color | ((uint32_t)color << 16);
+    REG_DMA3SAD   = (uint32_t)&dma_fill_word;
+    REG_DMA3DAD   = VRAM;
+    REG_DMA3CNT_L = SCREEN_WIDTH * SCREEN_HEIGHT / 2; // 32-bit word count
+    REG_DMA3CNT_H = DMA_ENABLE_32_SRCFIX;              // start immediately, halts CPU until done
 }
 
 void put_pixel(int x, int y, color_t color) {

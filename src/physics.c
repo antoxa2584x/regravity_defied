@@ -76,7 +76,7 @@ static int field_133, field_134, field_135, field_136; // nearest-segment window
 static int field_137, field_138;           // collision normal out
 static int isEnabledPerspective = 1;
 
-static int smth_max_abs(int x, int y) {
+IWRAM_FN static int smth_max_abs(int x, int y) {
     int ax = x < 0 ? -x : x;
     int ay = y < 0 ? -y : y;
     int mx, mn;
@@ -136,7 +136,7 @@ static void load_level(const uint8_t* data) {
 }
 
 // LevelLoader::method_100 — slide the nearest-segment window to cover [var1,var2].
-static void lvl_window(int var1, int var2) {
+IWRAM_FN static void lvl_window(int var1, int var2) {
     var2 >>= 1; var1 >>= 1;
     if (field_134 > lvl_count - 1) field_134 = lvl_count - 1;
     if (field_133 < 0) field_133 = 0;
@@ -155,7 +155,7 @@ static void lvl_window(int var1, int var2) {
 
 // LevelLoader::method_101 — collide one moto point against the window.
 // Returns 2 free, 1 touching (apply response), 0 deep penetration.
-static int lvl_collide(MotoPart* pt, int rclass) {
+IWRAM_FN static int lvl_collide(MotoPart* pt, int rclass) {
     int var16 = 0;
     int var17 = 2;
     int v18 = pt->x >> 1;
@@ -297,7 +297,7 @@ static void build_moto(int sx, int sy) {
 // ---- solver ----------------------------------------------------------------
 
 // GamePhysics::method_42 — spring force between two nodes' parts.
-static void spring_force(Node* A, MotoPart* sp, Node* B, int slot, int scale) {
+IWRAM_FN static void spring_force(Node* A, MotoPart* sp, Node* B, int slot, int scale) {
     MotoPart* a = &A->mc[slot];
     MotoPart* b = &B->mc[slot];
     int dx = a->x - b->x;
@@ -323,7 +323,7 @@ static void spring_force(Node* A, MotoPart* sp, Node* B, int slot, int scale) {
 }
 
 // GamePhysics::method_40 — accumulate forces (gravity + springs + engine).
-static void accumulate_forces(int slot) {
+IWRAM_FN static void accumulate_forces(int slot) {
     for (int i = 0; i < 6; i++) {
         MotoPart* m = &nodes[i].mc[slot];
         m->f385 = 0;
@@ -371,7 +371,7 @@ static void accumulate_forces(int slot) {
 }
 
 // GamePhysics::method_43 — derivative of state into slot_out.
-static void derive(int slot_in, int slot_out, int dt) {
+IWRAM_FN static void derive(int slot_in, int slot_out, int dt) {
     for (int i = 0; i < 6; i++) {
         MotoPart* s = &nodes[i].mc[slot_in];
         MotoPart* d = &nodes[i].mc[slot_out];
@@ -384,7 +384,7 @@ static void derive(int slot_in, int slot_out, int dt) {
 }
 
 // GamePhysics::method_44 — slot_out = slot_a + slot_b/2.
-static void blend(int slot_out, int slot_a, int slot_b) {
+IWRAM_FN static void blend(int slot_out, int slot_a, int slot_b) {
     for (int i = 0; i < 6; i++) {
         MotoPart* d = &nodes[i].mc[slot_out];
         MotoPart* a = &nodes[i].mc[slot_a];
@@ -397,7 +397,7 @@ static void blend(int slot_out, int slot_a, int slot_b) {
 }
 
 // GamePhysics::method_45 — one integration step of size dt.
-static void integrate(int dt) {
+IWRAM_FN static void integrate(int dt) {
     accumulate_forces(index01);
     derive(index01, 2, dt);
     blend(4, index01, 2);
@@ -420,13 +420,13 @@ static int track_started(void) __attribute__((unused));
 static int track_started(void) {
     return nodes[1].mc[index01].x < (lvl_px[startFlagPoint] << 1);
 }
-static int reached_finish(void) {
+IWRAM_FN static int reached_finish(void) {
     int fx = lvl_px[finishFlagPoint] << 1;
     return nodes[1].mc[index10].x > fx || nodes[2].mc[index10].x > fx;
 }
 
 // GamePhysics::method_46 — test all collidable nodes against the track.
-static int collide_all(int slot) {
+IWRAM_FN static int collide_all(int slot) {
     int ret = 2;
     int a = nodes[1].mc[slot].x, b = nodes[2].mc[slot].x, c = nodes[5].mc[slot].x;
     int mx = a > b ? a : b; if (c > mx) mx = c;
@@ -459,7 +459,7 @@ static int collide_all(int slot) {
 }
 
 // GamePhysics::method_47 — collision response on node field_28.
-static void collide_response(int slot) {
+IWRAM_FN static void collide_response(int slot) {
     Node* nd = &nodes[field_28];
     MotoPart* m = &nd->mc[slot];
     m->x += mulF(field_33, 3276);
@@ -498,7 +498,7 @@ static void collide_response(int slot) {
 }
 
 // GamePhysics::method_39 — adaptive sub-stepping driver.
-static int step_solver(int total) {
+IWRAM_FN static int step_solver(int total) {
     int started = field_68;
     int var3 = 0;
     int var4 = total;
@@ -547,7 +547,7 @@ label77:
 }
 
 // GamePhysics::method_35 — translate inputs into engine drive / lean torque.
-static void apply_input(void) {
+IWRAM_FN static void apply_input(void) {
     if (field_35) return;
     int dx = nodes[1].mc[index01].x - nodes[2].mc[index01].x;
     int dy = nodes[1].mc[index01].y - nodes[2].mc[index01].y;
@@ -657,10 +657,10 @@ void init_bike(Bike* b, const uint8_t* track_data) {
     }
 }
 
-void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) {
+IWRAM_FN void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) {
     (void)track_data;
-    isInputAcceleration = (keys & KEY_UP) ? 1 : 0;
-    isInputBreak        = (keys & KEY_DOWN) ? 1 : 0;
+    isInputAcceleration = (keys & KEY_A) ? 1 : 0;
+    isInputBreak        = (keys & KEY_B) ? 1 : 0;
     isInputBack         = (keys & KEY_LEFT) ? 1 : 0;
     isInputForward      = (keys & KEY_RIGHT) ? 1 : 0;
 
