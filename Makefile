@@ -2,6 +2,7 @@
 CROSS = arm-none-eabi-
 CC = $(CROSS)gcc
 OBJCOPY = $(CROSS)objcopy
+PYTHON ?= python3
 
 # Target name
 TARGET = regravity_defied
@@ -51,8 +52,7 @@ $(TARGET).elf: $(OBJS)
 # Convert ELF file to GBA ROM
 $(TARGET).gba: $(TARGET).elf
 	$(OBJCOPY) -v -O binary $< $@
-	# GBA fix (optional but recommended for real hardware)
-	# gbafix $@
+	$(PYTHON) gbafix.py $@
 
 # Clean target
 clean:

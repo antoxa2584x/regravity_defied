@@ -8,7 +8,9 @@
 #define REG_VCOUNT   (*(volatile uint16_t*)0x04000006)
 #define REG_KEYINPUT (*(volatile uint16_t*)0x04000130)
 #define REG_WAITCNT  (*(volatile uint16_t*)0x04000204)
+#ifndef VRAM
 #define VRAM 0x06000000
+#endif
 
 // DMA channel 3 — general-purpose, used for fast screen fill
 #define REG_DMA3SAD   (*(volatile uint32_t*)0x040000D4)

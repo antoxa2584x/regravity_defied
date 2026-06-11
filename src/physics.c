@@ -14,6 +14,7 @@
 #include "physics.h"
 #include "level.h"
 #include "graphics.h"
+#include "gd_assets.h"
 #include <stdlib.h>
 
 #define MAXP 160
@@ -678,60 +679,113 @@ IWRAM_FN void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) 
     }
 }
 
-// 32-entry sin table, F8 (sin * 256), index = angle * 32 / 2pi.
-static const short SIN32[32] = {
-    0,  50,  98, 142, 181, 213, 237, 251, 256, 251, 237, 213, 181, 142, 98, 50,
-    0, -50, -98,-142,-181,-213,-237,-251,-256,-251,-237,-213,-181,-142,-98,-50
-};
-// angle is F16 radians; reduce to [0,32).
-static int ang_idx(int angleF16) {
-    // idx = angle / (2pi) * 32 = angle * 32 / 411775  (2pi*65536=411775)
-    int i = (int)(((int64_t)angleF16 * 32) / 411775);
-    i &= 31;
-    if (i < 0) i += 32;
-    return i;
-}
-static int isin(int idx) { return SIN32[idx & 31]; }
-static int icos(int idx) { return SIN32[(idx + 8) & 31]; }
-
-// Draw a spoked wheel: tire ring + spokes rotated by the wheel spin angle.
-static void draw_wheel(int cx, int cy, int angleF16) {
-    fill_circle(cx, cy, 4, COLOR(2, 2, 2));      // tire
-    fill_circle(cx, cy, 2, COLOR(12, 12, 12));   // hub area
-    int base = ang_idx(angleF16);
-    for (int s = 0; s < 4; s++) {
-        int a = (base + s * 8) & 31;
-        int ex = cx + isin(a) * 4 / 256;
-        int ey = cy - icos(a) * 4 / 256;
-        draw_line(cx, cy, ex, ey, COLOR(20, 20, 20)); // spokes
+// Fixed-point atan2 (F16 radians), standard atan2(y, x) semantics.
+// The reference orients sprites with atan2F16(dx, dy) == atan2(dx, dy), so
+// callers pass (dx, dy). Cubic approximation, error < 0.005 rad.
+#define PI_F16        205887   // pi * 65536
+#define QTR_PI_F16    51472    // pi/4 * 65536
+#define THREE_QTR_F16 154415   // 3pi/4 * 65536
+static int atan2_f16(int y, int x) {
+    if (x == 0 && y == 0) return 0;
+    int aby = (y < 0) ? -y : y;
+    if (aby == 0) aby = 1;
+    int angle, r;
+    if (x >= 0) {
+        r = divF(x - aby, x + aby);
+        int r3 = mulF(mulF(r, r), r);
+        angle = mulF(12867, r3) - mulF(64338, r) + QTR_PI_F16;
+    } else {
+        r = divF(x + aby, aby - x);
+        int r3 = mulF(mulF(r, r), r);
+        angle = mulF(12867, r3) - mulF(64338, r) + THREE_QTR_F16;
     }
-    put_pixel(cx, cy, COLOR(28, 28, 28));            // hub
+    return (y < 0) ? -angle : angle;
 }
+
+// Port of GameCanvas::calcSpriteNo: fold angle into [0,span), optionally
+// mirror, then map to one of `frames` rotation tiles.
+static int calc_sprite_no(int angleF16, int off, int span, int frames, int mirror) {
+    angleF16 += off;
+    while (angleF16 < 0) angleF16 += span;
+    while (angleF16 >= span) angleF16 -= span;
+    if (mirror) angleF16 = span - angleF16;
+    int f = (int)((int64_t)angleF16 * frames / span);
+    if (f >= frames) f = frames - 1;
+    if (f < 0) f = 0;
+    return f;
+}
+
+#define TWO_PI_F16 411774
 
 void draw_bike(Bike* b, int ox, int oy) {
-    int px[6], py[6];
+    int nx[6], ny[6], px[6], py[6];
     for (int i = 0; i < 6; i++) {
-        px[i] = get_pixel_coord(b->nodes[i].x) + ox;
-        py[i] = oy - get_pixel_coord(b->nodes[i].y);
+        nx[i] = b->nodes[i].x;
+        ny[i] = b->nodes[i].y;
+        px[i] = get_pixel_coord(nx[i]) + ox;
+        py[i] = oy - get_pixel_coord(ny[i]);
     }
 
-    // Frame / fork (dark), styled after the ref engine/fender parts.
-    draw_line(px[3], py[3], px[1], py[1], COLOR(18, 18, 18)); // front fork
-    draw_line(px[4], py[4], px[2], py[2], COLOR(18, 18, 18)); // rear arm
-    draw_line(px[0], py[0], px[3], py[3], COLOR(6, 6, 8));
-    draw_line(px[0], py[0], px[4], py[4], COLOR(6, 6, 8));
-    draw_line(px[3], py[3], px[4], py[4], COLOR(6, 6, 8));    // engine block line
+    // Bike forward direction (fork -> rear mount), normalised so the larger
+    // component is 1.0 in F16 — matches the reference's getSmthLikeMaxAbs.
+    int dx = nx[3] - nx[4], dy = ny[3] - ny[4];
+    int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+    int m = adx > ady ? adx : ady;
+    int ux = 0, uy = 0;
+    if (m) { ux = (int)((int64_t)dx << 16) / m; uy = (int)((int64_t)dy << 16) / m; }
+    int v10 = -uy;
 
-    // Spoked wheels using real wheel-spin angle from the solver.
-    draw_wheel(px[1], py[1], nodes[1].mc[index01].angle);
-    draw_wheel(px[2], py[2], nodes[2].mc[index01].angle);
+    // Engine sits between frame(0) and fork(3); fender between frame(0) and
+    // rear mount(4). Offsets are reference mc-units halved into node units.
+    int engineAngle = atan2_f16(nx[0] - nx[3], ny[0] - ny[3]);
+    int fenderAngle = atan2_f16(nx[0] - nx[4], ny[0] - ny[4]);
 
-    // Rider: blue body (legs->frame->torso) + helmet, styled after blue* parts.
-    int hx = px[5], hy = py[5];
-    int mx = (px[0] + px[5]) / 2, my = (py[0] + py[5]) / 2;
-    draw_line(px[0], py[0], mx, my, COLOR(2, 4, 22));  // legs
-    draw_line(mx, my, hx, hy, COLOR(4, 8, 28));        // torso (blue body)
-    draw_line(mx, my, px[3], py[3], COLOR(4, 8, 28));  // arm to bars
-    fill_circle(hx, hy, 3, COLOR(28, 22, 14));         // helmet
-    fill_circle(hx, hy, 2, COLOR(20, 6, 6));           // helmet visor accent
+    int ecx = (nx[0] + nx[3]) / 2 + (v10 - ux / 2) / 2;
+    int ecy = (ny[0] + ny[3]) / 2 + (ux - uy / 2) / 2;
+    int fcx = (nx[0] + nx[4]) / 2 + (v10 - mulF(ux, 117964)) / 2;
+    int fcy = (ny[0] + ny[4]) / 2 + (ux - mulF(uy, 131072)) / 2;
+
+    int epx = get_pixel_coord(ecx) + ox, epy = oy - get_pixel_coord(ecy);
+    int fpx = get_pixel_coord(fcx) + ox, fpy = oy - get_pixel_coord(fcy);
+
+    int eframe = calc_sprite_no(engineAngle, -247063, TWO_PI_F16, 32, 1);
+    int fframe = calc_sprite_no(fenderAngle, -185297, TWO_PI_F16, 32, 1);
+
+    // Fender (front mudguard) behind, then engine block.
+    draw_sprite_frame(fpx - FENDER_SHEET_FW / 2, fpy - FENDER_SHEET_FH / 2,
+                      fender_sheet, FENDER_SHEET_W, FENDER_SHEET_FW, FENDER_SHEET_FH, fframe);
+    draw_sprite_frame(epx - ENGINE_SHEET_FW / 2, epy - ENGINE_SHEET_FH / 2,
+                      engine_sheet, ENGINE_SHEET_W, ENGINE_SHEET_FW, ENGINE_SHEET_FH, eframe);
+
+    // Tires, centred on each wheel node. League picks thin/thick rims
+    // (cur_league: 0=100cc thin/thin, 1=175cc thin/thick, 2=220cc thick/thick).
+    const color_t* front_tire = (cur_league >= 2) ? wheel_thick : wheel_thin;
+    const color_t* rear_tire  = (cur_league >= 1) ? wheel_thick : wheel_thin;
+    draw_sprite(px[2] - WHEEL_THIN_W / 2, py[2] - WHEEL_THIN_H / 2, rear_tire, WHEEL_THIN_W, WHEEL_THIN_H);
+    draw_sprite(px[1] - WHEEL_THIN_W / 2, py[1] - WHEEL_THIN_H / 2, front_tire, WHEEL_THIN_W, WHEEL_THIN_H);
+
+    // Rider. The physics rider node (5) swings far on its spring, so anchoring
+    // the helmet there makes it fly around; instead seat the rider on the frame
+    // and raise the head along the bike's "up" axis (perpendicular to the wheel
+    // axis, which is the most stable orientation reference available).
+    int wfx = nx[1] - nx[2], wfy = ny[1] - ny[2];  // wheel axis (rear -> front)
+    int upx = -wfy, upy = wfx;                     // rotate +90deg -> bike up
+    int aupx = upx < 0 ? -upx : upx, aupy = upy < 0 ? -upy : upy;
+    int uhyp = (aupx > aupy) ? aupx + aupy * 3 / 8 : aupy + aupx * 3 / 8;
+    if (uhyp < 1) uhyp = 1;
+    int unx = (int)((int64_t)upx << 16) / uhyp;    // F16 unit up vector
+    int uny = (int)((int64_t)upy << 16) / uhyp;
+
+    int seat_x = nx[0], seat_y = ny[0];
+    int head_x = seat_x + (int)((int64_t)unx * 131072 >> 16);  // ~16px up
+    int head_y = seat_y + (int)((int64_t)uny * 131072 >> 16);
+    int spx = get_pixel_coord(seat_x) + ox, spy = oy - get_pixel_coord(seat_y);
+    int hpx = get_pixel_coord(head_x) + ox, hpy = oy - get_pixel_coord(head_y);
+
+    draw_line(spx, spy, hpx, hpy, COLOR(4, 8, 28));   // torso
+
+    int helmetAngle = atan2_f16(wfx, wfy);
+    int hframe = calc_sprite_no(helmetAngle, -102943, TWO_PI_F16, 32, 1);
+    draw_sprite_frame(hpx - HELMET_SHEET_FW / 2, hpy - HELMET_SHEET_FH / 2,
+                      helmet_sheet, HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
 }

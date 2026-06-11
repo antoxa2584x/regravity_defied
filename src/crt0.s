@@ -7,7 +7,7 @@ _start:
 
 @ GBA Header (partial/simple)
 .org 0x04
-.space 152 @ ROM Logo
+.space 156 @ ROM Logo (156 bytes, overwritten by gbafix.py post-build)
 .space 12  @ Game Title
 .space 4   @ Game Code
 .space 2   @ Maker Code

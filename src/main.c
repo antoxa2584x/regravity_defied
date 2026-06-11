@@ -2,9 +2,11 @@
 #include "graphics.h"
 #include "level.h"
 #include "physics.h"
+#include "gd_assets.h"
 #include <stdlib.h>
 
 enum State {
+    STATE_SPLASH,
     STATE_MENU_HARDNESS,
     STATE_MENU_TRACK,
     STATE_TRACK_VIEW,
@@ -45,7 +47,7 @@ int main() {
     int track_idx = 0;
     int cam_x = 0, cam_y = 0;
     int update = 1;
-    enum State state = STATE_MENU_HARDNESS;
+    enum State state = STATE_SPLASH;
     const uint8_t* cur_track = NULL; // cached; set when entering STATE_GAME
     
     uint16_t prev_keys = 0;
@@ -58,7 +60,12 @@ int main() {
         uint16_t keys_pressed = keys & ~prev_keys;
         prev_keys = keys;
 
-        if (state == STATE_MENU_HARDNESS) {
+        if (state == STATE_SPLASH) {
+            if (keys_pressed & (KEY_START | KEY_A | KEY_B)) {
+                state = STATE_MENU_HARDNESS;
+                update = 1;
+            }
+        } else if (state == STATE_MENU_HARDNESS) {
             if (keys_pressed & KEY_UP) {
                 if (level_idx > 0) { level_idx--; update = 1; }
             }
@@ -150,7 +157,10 @@ int main() {
             // Clear screen manually with 32-bit writes (optimized in graphics.c)
             clear_screen(COLOR(31, 31, 31)); 
             
-            if (state == STATE_MENU_HARDNESS) {
+            if (state == STATE_SPLASH) {
+                draw_sprite((SCREEN_WIDTH - SPLASH_IMG_W) / 2, 50, splash_img, SPLASH_IMG_W, SPLASH_IMG_H);
+                draw_string(87, 120, "PRESS START", COLOR(0, 0, 0));
+            } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
                 draw_string(85, 20, "SELECT LEAGUE", COLOR(0, 0, 0));
                 for (int i = 0; i < 3; i++) {

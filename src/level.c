@@ -161,15 +161,15 @@ IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
 
     for (int i = 0; i < points_count - 1; i++) {
         int8_t dx = (int8_t)*p++;
+        int32_t next_x, next_y;
         if (dx == -1) {
-            cur_x = convert_coord(read_be32(p)); p += 4;
-            cur_y = convert_coord(read_be32(p)); p += 4;
-            project_point(cur_x, cur_y, ox, oy, &pnx, &pny, &pfx, &pfy);
-            continue;
+            next_x = convert_coord(read_be32(p)); p += 4;
+            next_y = convert_coord(read_be32(p)); p += 4;
+        } else {
+            int8_t dy = (int8_t)*p++;
+            next_x = cur_x + convert_coord(dx);
+            next_y = cur_y + convert_coord(dy);
         }
-        int8_t dy = (int8_t)*p++;
-        int32_t next_x = cur_x + convert_coord(dx);
-        int32_t next_y = cur_y + convert_coord(dy);
 
         int nnx, nny, nfx, nfy;
         project_point(next_x, next_y, ox, oy, &nnx, &nny, &nfx, &nfy);

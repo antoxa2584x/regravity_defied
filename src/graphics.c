@@ -141,6 +141,22 @@ void draw_sprite(int x, int y, const color_t* data, int w, int h) {
     }
 }
 
+// Blit one frame from a rotation sheet laid out 6 frames per row (matching the
+// reference sprite sheets). frame selects the sub-tile: col = frame % 6,
+// row = frame / 6; (x, y) is the on-screen top-left.
+void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
+                       int fw, int fh, int frame) {
+    int sx = (frame % 6) * fw;
+    int sy = (frame / 6) * fh;
+    for (int row = 0; row < fh; row++) {
+        const color_t* src = &sheet[(sy + row) * sheet_w + sx];
+        for (int col = 0; col < fw; col++) {
+            color_t c = src[col];
+            if (c & 0x8000) put_pixel(x + col, y + row, c & 0x7FFF);
+        }
+    }
+}
+
 IWRAM_FN void fill_circle(int cx, int cy, int r, color_t color) {
     for (int dy = -r; dy <= r; dy++) {
         for (int dx = -r; dx <= r; dx++) {
