@@ -35,4 +35,18 @@ void draw_bike(Bike* b, int ox, int oy);
 // Select engine league before init_bike: 0=100cc, 1=175cc, 2=220cc.
 void physics_set_league(int league);
 
+// Precomputed track geometry, built once by init_bike()/load_level().
+// Points are absolute internal-X-sorted (strictly increasing px), so the
+// renderer can binary-search the on-screen window instead of re-decoding the
+// delta stream and projecting every point each frame.
+typedef struct {
+    const int* px;        // absolute X, internal units (strictly increasing)
+    const int* py;        // absolute Y, internal units
+    int count;
+    int start_flag_idx;   // point index for the start flag (-1 if none)
+    int finish_flag_idx;  // point index for the finish flag (-1 if none)
+} TrackGeom;
+
+const TrackGeom* physics_get_track_geom(void);
+
 #endif // PHYSICS_H

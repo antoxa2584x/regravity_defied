@@ -14,7 +14,7 @@ BUILD_DIR = build
 # Compiler flags
 CFLAGS = -mthumb -mthumb-interwork -mlittle-endian -mcpu=arm7tdmi \
          -mtune=arm7tdmi -fno-strict-aliasing -fno-exceptions \
-         -O2 -Wall
+         -O3 -Wall
 
 # Linker flags
 LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T gba.ld

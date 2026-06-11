@@ -132,27 +132,39 @@ void draw_string(int x, int y, const char* str, color_t color) {
     }
 }
 
-void draw_sprite(int x, int y, const color_t* data, int w, int h) {
-    for (int row = 0; row < h; row++) {
-        for (int col = 0; col < w; col++) {
-            color_t c = data[row * w + col];
-            if (c & 0x8000) put_pixel(x + col, y + row, c & 0x7FFF);
+IWRAM_FN void draw_sprite(int x, int y, const color_t* data, int w, int h) {
+    int cx0 = x < 0 ? 0 : x;
+    int cy0 = y < 0 ? 0 : y;
+    int cx1 = x + w > SCREEN_WIDTH  ? SCREEN_WIDTH  : x + w;
+    int cy1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
+    color_t* vram = (color_t*)VRAM;
+    for (int row = cy0; row < cy1; row++) {
+        const color_t* src = data + (row - y) * w + (cx0 - x);
+        color_t*       dst = vram + row * SCREEN_WIDTH + cx0;
+        for (int col = cx0; col < cx1; col++) {
+            color_t c = *src++;
+            if (c & 0x8000) *dst = c & 0x7FFF;
+            dst++;
         }
     }
 }
 
-// Blit one frame from a rotation sheet laid out 6 frames per row (matching the
-// reference sprite sheets). frame selects the sub-tile: col = frame % 6,
-// row = frame / 6; (x, y) is the on-screen top-left.
-void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
-                       int fw, int fh, int frame) {
+IWRAM_FN void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
+                                int fw, int fh, int frame) {
     int sx = (frame % 6) * fw;
     int sy = (frame / 6) * fh;
-    for (int row = 0; row < fh; row++) {
-        const color_t* src = &sheet[(sy + row) * sheet_w + sx];
-        for (int col = 0; col < fw; col++) {
-            color_t c = src[col];
-            if (c & 0x8000) put_pixel(x + col, y + row, c & 0x7FFF);
+    int cx0 = x < 0 ? 0 : x;
+    int cy0 = y < 0 ? 0 : y;
+    int cx1 = x + fw > SCREEN_WIDTH  ? SCREEN_WIDTH  : x + fw;
+    int cy1 = y + fh > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + fh;
+    color_t* vram = (color_t*)VRAM;
+    for (int row = cy0; row < cy1; row++) {
+        const color_t* src = sheet + (sy + row - y) * sheet_w + sx + (cx0 - x);
+        color_t*       dst = vram + row * SCREEN_WIDTH + cx0;
+        for (int col = cx0; col < cx1; col++) {
+            color_t c = *src++;
+            if (c & 0x8000) *dst = c & 0x7FFF;
+            dst++;
         }
     }
 }

@@ -1,6 +1,7 @@
 #include "level.h"
 #include "graphics.h"
 #include "gd_sprites.h"
+#include "physics.h"
 
 static int s_flag_tick = 0;
 
@@ -122,57 +123,55 @@ IWRAM_FN static int seg_offscreen(int x1, int x2) {
 // ref/assets/sprites.png (start = pennant, finish = checkered).
 static void draw_flag(int nx, int ny, int fx, int fy, int finish) {
     if (nx < -RIBBON_DEPTH || nx >= SCREEN_WIDTH + RIBBON_DEPTH) return;
-    // Pole rises from the far (back) edge so it stands on the track surface.
-    int px = fx, py = fy;
-    draw_line(px, py, px, py - 28, COLOR(0, 0, 0));
     int slot = (s_flag_tick >> 3) & 3;
     const color_t* frame = finish
         ? flag_finish_frames[flag_finish_anim[slot]]
         : flag_start_frames[flag_start_anim[slot]];
-    draw_sprite(px + 1, py - 28, frame, FLAG_W, FLAG_H);
+    // Far (ribbon) side pole
+    draw_line(fx, fy, fx, fy - 28, COLOR(0, 0, 0));
+    draw_sprite(fx + 1, fy - 28, frame, FLAG_W, FLAG_H);
+    // Near (riding) side pole
+    draw_line(nx, ny, nx, ny - 28, COLOR(0, 0, 0));
+    draw_sprite(nx + 1, ny - 28, frame, FLAG_W, FLAG_H);
+}
+
+// Binary search for the first point whose near (screen) X is >= target_px.
+// Relies on px[] being strictly increasing (guaranteed by load_level).
+IWRAM_FN static int first_point_at(const int* px, int count, int ox, int target_px) {
+    int lo = 0, hi = count;
+    while (lo < hi) {
+        int mid = (lo + hi) >> 1;
+        if (get_pixel_coord(px[mid]) + ox < target_px) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
 }
 
 IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
-    const uint8_t* p = data;
-    if (*p != 0x33) return;
-    p++;
+    if (*data != 0x33) return;
     s_flag_tick++;
 
-    // These are already in internal F13 format: (value << 16) >> 3
-    int32_t start_threshold = (int32_t)read_be32(p); p += 4;
-    p += 4; // skip start_y
-    int32_t finish_threshold = (int32_t)read_be32(p); p += 4;
-    p += 4; // skip finish_y
-
-    uint16_t points_count = read_be16(p); p += 2;
-
-    int32_t cur_x = convert_coord(read_be32(p)); p += 4;
-    int32_t cur_y = convert_coord(read_be32(p)); p += 4;
+    // All geometry is precomputed once in load_level(); per frame we only
+    // project the points inside the visible X window.
+    const TrackGeom* g = physics_get_track_geom();
+    if (g->count < 2) return;
+    const int* px = g->px;
+    const int* py = g->py;
 
     int ox = SCREEN_WIDTH / 2 - cam_x;
     int oy = SCREEN_HEIGHT / 2 + cam_y;
 
-    int found_start = 0, found_finish = 0;
-    int start_nx = 0, start_ny = 0, start_fx = 0, start_fy = 0;
-    int finish_nx = 0, finish_ny = 0, finish_fx = 0, finish_fy = 0;
+    // Window of points whose segments can touch the screen. Start one point to
+    // the left so the segment entering from off-screen is drawn.
+    int start = first_point_at(px, g->count, ox, -RIBBON_DEPTH);
+    if (start > 0) start--;
 
     int pnx, pny, pfx, pfy;
-    project_point(cur_x, cur_y, ox, oy, &pnx, &pny, &pfx, &pfy);
+    project_point(px[start], py[start], ox, oy, &pnx, &pny, &pfx, &pfy);
 
-    for (int i = 0; i < points_count - 1; i++) {
-        int8_t dx = (int8_t)*p++;
-        int32_t next_x, next_y;
-        if (dx == -1) {
-            next_x = convert_coord(read_be32(p)); p += 4;
-            next_y = convert_coord(read_be32(p)); p += 4;
-        } else {
-            int8_t dy = (int8_t)*p++;
-            next_x = cur_x + convert_coord(dx);
-            next_y = cur_y + convert_coord(dy);
-        }
-
+    for (int i = start + 1; i < g->count; i++) {
         int nnx, nny, nfx, nfy;
-        project_point(next_x, next_y, ox, oy, &nnx, &nny, &nfx, &nfy);
+        project_point(px[i], py[i], ox, oy, &nnx, &nny, &nfx, &nfy);
 
         if (!seg_offscreen(pnx, nnx)) {
             // Far edge (back) and connector rung, then bright near (riding) edge.
@@ -181,20 +180,23 @@ IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
             draw_line(pnx, pny, nnx, nny, COLOR(0, 31, 0));
         }
 
-        // Flag positions: first vertex past each threshold.
-        if (!found_start && next_x > start_threshold) {
-            start_nx = nnx; start_ny = nny; start_fx = nfx; start_fy = nfy;
-            found_start = 1;
-        }
-        if (!found_finish && next_x > finish_threshold) {
-            finish_nx = nnx; finish_ny = nny; finish_fx = nfx; finish_fy = nfy;
-            found_finish = 1;
-        }
+        // Everything past the right edge is off-screen (X is increasing): the
+        // segment crossing it is drawn above, then we stop.
+        if (nnx >= SCREEN_WIDTH + RIBBON_DEPTH) break;
 
-        cur_x = next_x; cur_y = next_y;
         pnx = nnx; pny = nny; pfx = nfx; pfy = nfy;
     }
 
-    if (found_start)  draw_flag(start_nx, start_ny, start_fx, start_fy, 0);
-    if (found_finish) draw_flag(finish_nx, finish_ny, finish_fx, finish_fy, 1);
+    int si = g->start_flag_idx;
+    if (si >= 0 && si < g->count) {
+        int nx, ny, fx, fy;
+        project_point(px[si], py[si], ox, oy, &nx, &ny, &fx, &fy);
+        draw_flag(nx, ny, fx, fy, 0);
+    }
+    int fi = g->finish_flag_idx;
+    if (fi >= 0 && fi < g->count) {
+        int nx, ny, fx, fy;
+        project_point(px[fi], py[fi], ox, oy, &nx, &ny, &fx, &fy);
+        draw_flag(nx, ny, fx, fy, 1);
+    }
 }

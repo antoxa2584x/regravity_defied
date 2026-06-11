@@ -72,6 +72,8 @@ static int lvl_nx[MAXP], lvl_ny[MAXP];     // field_121 segment normals (F16)
 static int lvl_startPosX, lvl_startPosY, lvl_finishPosX, lvl_finishPosY;
 static int startFlagPoint, finishFlagPoint;
 
+static int render_start_idx = -1, render_finish_idx = -1; // flag point indices
+static TrackGeom track_geom;               // exposed precomputed geometry
 static int field_123[3], field_124[3];     // outer / inner radius^2 (>>16)
 static int field_133, field_134, field_135, field_136; // nearest-segment window
 static int field_137, field_138;           // collision normal out
@@ -91,6 +93,13 @@ static void load_level(const uint8_t* data) {
     lvl_count = 0;
     startFlagPoint = 0;
     finishFlagPoint = 0;
+    render_start_idx = -1;
+    render_finish_idx = -1;
+    track_geom.px = lvl_px;
+    track_geom.py = lvl_py;
+    track_geom.count = 0;
+    track_geom.start_flag_idx = -1;
+    track_geom.finish_flag_idx = -1;
     if (*p != 0x33) return;
     p++;
     lvl_startPosX  = (int)read_be32(p); p += 4;
@@ -131,9 +140,21 @@ static void load_level(const uint8_t* data) {
         lvl_ny[i] = divF(dx, mag);
         if (startFlagPoint == 0 && lvl_px[i] > lvl_startPosX) startFlagPoint = i + 1;
         if (finishFlagPoint == 0 && lvl_px[i] > lvl_finishPosX) finishFlagPoint = i;
+        // Render flags sit on the first vertex past each threshold (matches the
+        // previous per-frame draw_track scan).
+        if (render_start_idx < 0 && lvl_px[i] > lvl_startPosX) render_start_idx = i;
+        if (render_finish_idx < 0 && lvl_px[i] > lvl_finishPosX) render_finish_idx = i;
     }
     if (startFlagPoint >= lvl_count) startFlagPoint = lvl_count - 1;
     if (finishFlagPoint >= lvl_count) finishFlagPoint = lvl_count - 1;
+
+    track_geom.count = lvl_count;
+    track_geom.start_flag_idx = render_start_idx;
+    track_geom.finish_flag_idx = render_finish_idx;
+}
+
+const TrackGeom* physics_get_track_geom(void) {
+    return &track_geom;
 }
 
 // LevelLoader::method_100 — slide the nearest-segment window to cover [var1,var2].
@@ -745,8 +766,8 @@ void draw_bike(Bike* b, int ox, int oy) {
     int fcx = (nx[0] + nx[4]) / 2 + (v10 - mulF(ux, 117964)) / 2;
     int fcy = (ny[0] + ny[4]) / 2 + (ux - mulF(uy, 131072)) / 2;
 
-    int epx = get_pixel_coord(ecx) + ox, epy = oy - get_pixel_coord(ecy);
-    int fpx = get_pixel_coord(fcx) + ox, fpy = oy - get_pixel_coord(fcy);
+    int epx = get_pixel_coord(ecx) + ox, epy = oy - get_pixel_coord(ecy) - 3;
+    int fpx = get_pixel_coord(fcx) + ox, fpy = oy - get_pixel_coord(fcy) - 3;
 
     int eframe = calc_sprite_no(engineAngle, -247063, TWO_PI_F16, 32, 1);
     int fframe = calc_sprite_no(fenderAngle, -185297, TWO_PI_F16, 32, 1);
@@ -764,21 +785,21 @@ void draw_bike(Bike* b, int ox, int oy) {
     draw_sprite(px[2] - WHEEL_THIN_W / 2, py[2] - WHEEL_THIN_H / 2, rear_tire, WHEEL_THIN_W, WHEEL_THIN_H);
     draw_sprite(px[1] - WHEEL_THIN_W / 2, py[1] - WHEEL_THIN_H / 2, front_tire, WHEEL_THIN_W, WHEEL_THIN_H);
 
-    // Rider. The physics rider node (5) swings far on its spring, so anchoring
-    // the helmet there makes it fly around; instead seat the rider on the frame
-    // and raise the head along the bike's "up" axis (perpendicular to the wheel
-    // axis, which is the most stable orientation reference available).
-    int wfx = nx[1] - nx[2], wfy = ny[1] - ny[2];  // wheel axis (rear -> front)
-    int upx = -wfy, upy = wfx;                     // rotate +90deg -> bike up
+    // Rider. Use the physical frame direction (node 0 -> upper frame midpoint)
+    // as the up-vector — far more stable than the wheel axis, which jerks
+    // whenever one wheel hits a bump independently.
+    int wfx = nx[1] - nx[2], wfy = ny[1] - ny[2];  // wheel axis, still needed for helmetAngle
+
+    int seat_x = (nx[3] + nx[4]) / 2, seat_y = (ny[3] + ny[4]) / 2;
+    int upx = seat_x - nx[0], upy = seat_y - ny[0];  // frame up: bottom to upper frame
     int aupx = upx < 0 ? -upx : upx, aupy = upy < 0 ? -upy : upy;
     int uhyp = (aupx > aupy) ? aupx + aupy * 3 / 8 : aupy + aupx * 3 / 8;
     if (uhyp < 1) uhyp = 1;
-    int unx = (int)((int64_t)upx << 16) / uhyp;    // F16 unit up vector
+    int unx = (int)((int64_t)upx << 16) / uhyp;
     int uny = (int)((int64_t)upy << 16) / uhyp;
 
-    int seat_x = nx[0], seat_y = ny[0];
-    int head_x = seat_x + (int)((int64_t)unx * 131072 >> 16);  // ~16px up
-    int head_y = seat_y + (int)((int64_t)uny * 131072 >> 16);
+    int head_x = seat_x + (int)((int64_t)unx * 345760 >> 16);
+    int head_y = seat_y + (int)((int64_t)uny * 345760 >> 16);
     int spx = get_pixel_coord(seat_x) + ox, spy = oy - get_pixel_coord(seat_y);
     int hpx = get_pixel_coord(head_x) + ox, hpy = oy - get_pixel_coord(head_y);
 

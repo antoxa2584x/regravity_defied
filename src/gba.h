@@ -62,7 +62,14 @@ static inline void vsync() {
 }
 
 // Mark a function to run from IWRAM (0 wait states, 32-bit bus).
+// target("arm") emits 32-bit ARM instructions, fully utilising the 32-bit
+// IWRAM bus (Thumb only uses 16 of the 32 bits per fetch cycle).
 // Functions placed here must be copied from ROM at startup (see crt0.s).
-#define IWRAM_FN __attribute__((section(".iwram.text"), noinline))
+#ifdef HOST_BUILD
+// Host harness (x86) can't honour the ARM-specific placement attributes.
+#define IWRAM_FN
+#else
+#define IWRAM_FN __attribute__((section(".iwram.text"), noinline, target("arm")))
+#endif
 
 #endif // GBA_H
