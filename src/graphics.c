@@ -129,6 +129,23 @@ void draw_string(int x, int y, const char* str, color_t color) {
     }
 }
 
+void draw_sprite(int x, int y, const color_t* data, int w, int h) {
+    for (int row = 0; row < h; row++) {
+        for (int col = 0; col < w; col++) {
+            color_t c = data[row * w + col];
+            if (c & 0x8000) put_pixel(x + col, y + row, c & 0x7FFF);
+        }
+    }
+}
+
+void fill_circle(int cx, int cy, int r, color_t color) {
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy <= r * r) put_pixel(cx + dx, cy + dy, color);
+        }
+    }
+}
+
 void draw_line(int x1, int y1, int x2, int y2, color_t color) {
     // Fast path for vertical lines
     if (x1 == x2) {

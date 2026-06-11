@@ -87,6 +87,7 @@ int main() {
             if (keys_pressed & (KEY_START | KEY_A)) {
                 state = STATE_GAME;
                 const uint8_t* track_data = get_track_data(mrg, level_idx, track_idx);
+                physics_set_league(level_idx); // 0=100cc, 1=175cc, 2=220cc
                 init_bike(&player_bike, track_data);
                 // Immediately update physics once to snap to ground if close
                 update_physics(&player_bike, track_data, 0);
@@ -148,13 +149,13 @@ int main() {
             clear_screen(COLOR(31, 31, 31)); 
             
             if (state == STATE_MENU_HARDNESS) {
-                draw_string(70, 20, "SELECT HARDNESS", COLOR(0, 0, 0));
+                static const char* league_names[3] = { "100cc", "175cc", "220cc" };
+                draw_string(85, 20, "SELECT LEAGUE", COLOR(0, 0, 0));
                 for (int i = 0; i < 3; i++) {
                     color_t color = (i == level_idx) ? COLOR(0, 31, 0) : COLOR(10, 10, 10);
-                    char buf[2] = { (char)('1' + i), 0 };
-                    draw_string(110, 60 + i * 20, buf, color);
+                    draw_string(100, 60 + i * 20, league_names[i], color);
                     if (i == level_idx) {
-                        draw_string(95, 60 + i * 20, ">", color);
+                        draw_string(85, 60 + i * 20, ">", color);
                     }
                 }
             } else if (state == STATE_MENU_TRACK) {

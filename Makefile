@@ -4,7 +4,7 @@ CC = $(CROSS)gcc
 OBJCOPY = $(CROSS)objcopy
 
 # Target name
-TARGET = hello_world
+TARGET = regravity_defied
 
 # Build directories
 SRC_DIR = src

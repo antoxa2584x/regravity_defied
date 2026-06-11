@@ -1,5 +1,8 @@
 #include "level.h"
 #include "graphics.h"
+#include "gd_sprites.h"
+
+static int s_flag_tick = 0;
 
 int convert_coord(int32_t raw) {
     // raw comes from read_be32, so it's a 32-bit signed integer.
@@ -76,10 +79,64 @@ void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finis
     }
 }
 
+// Fast magnitude approximation (matches ref GamePhysics::getSmthLikeMaxAbs):
+// ~0.983*max(|x|,|y|) + 0.431*min(|x|,|y|)
+static int fast_hypot(int x, int y) {
+    int ax = x < 0 ? -x : x;
+    int ay = y < 0 ? -y : y;
+    int mx = ax > ay ? ax : ay;
+    int mn = ax > ay ? ay : ax;
+    return (int)(((int64_t)64448 * mx) >> 16) + (int)(((int64_t)28224 * mn) >> 16);
+}
+
+// 3D ribbon parameters (screen space). The far edge of each track segment is
+// offset toward a vanishing "eye" point, and connector rungs are drawn between
+// the near (riding) edge and the far edge, reproducing the ref renderLevel3D look.
+#define RIBBON_DEPTH   16   // ribbon width in pixels
+#define EYE_HEIGHT     90   // eye distance above screen center
+
+// Project an internal track point to its near (riding) and far (ribbon) screen
+// coordinates. Returns near in (*nx,*ny), far in (*fx,*fy).
+static void project_point(int32_t ix, int32_t iy, int ox, int oy,
+                          int* nx, int* ny, int* fx, int* fy) {
+    int sx = get_pixel_coord(ix) + ox;
+    int sy = oy - get_pixel_coord(iy);
+    int vx = SCREEN_WIDTH / 2;
+    int vy = SCREEN_HEIGHT / 2 - EYE_HEIGHT;
+    int ddx = vx - sx;
+    int ddy = vy - sy;
+    int m = fast_hypot(ddx, ddy);
+    if (m < 1) m = 1;
+    *nx = sx;
+    *ny = sy;
+    *fx = sx + ddx * RIBBON_DEPTH / m;
+    *fy = sy + ddy * RIBBON_DEPTH / m;
+}
+
+static int seg_offscreen(int x1, int x2) {
+    return (x1 < -RIBBON_DEPTH && x2 < -RIBBON_DEPTH) ||
+           (x1 >= SCREEN_WIDTH + RIBBON_DEPTH && x2 >= SCREEN_WIDTH + RIBBON_DEPTH);
+}
+
+// Draw a flag pole at the near point with an animated flag sprite from
+// ref/assets/sprites.png (start = pennant, finish = checkered).
+static void draw_flag(int nx, int ny, int fx, int fy, int finish) {
+    if (nx < -RIBBON_DEPTH || nx >= SCREEN_WIDTH + RIBBON_DEPTH) return;
+    // Pole rises from the far (back) edge so it stands on the track surface.
+    int px = fx, py = fy;
+    draw_line(px, py, px, py - 28, COLOR(0, 0, 0));
+    int slot = (s_flag_tick >> 3) & 3;
+    const color_t* frame = finish
+        ? flag_finish_frames[flag_finish_anim[slot]]
+        : flag_start_frames[flag_start_anim[slot]];
+    draw_sprite(px + 1, py - 28, frame, FLAG_W, FLAG_H);
+}
+
 void draw_track(const uint8_t* data, int cam_x, int cam_y) {
     const uint8_t* p = data;
     if (*p != 0x33) return;
     p++;
+    s_flag_tick++;
 
     // These are already in internal F13 format: (value << 16) >> 3
     int32_t start_threshold = (int32_t)read_be32(p); p += 4;
@@ -88,87 +145,56 @@ void draw_track(const uint8_t* data, int cam_x, int cam_y) {
     p += 4; // skip finish_y
 
     uint16_t points_count = read_be16(p); p += 2;
-    
+
     int32_t cur_x = convert_coord(read_be32(p)); p += 4;
     int32_t cur_y = convert_coord(read_be32(p)); p += 4;
 
     int ox = SCREEN_WIDTH / 2 - cam_x;
     int oy = SCREEN_HEIGHT / 2 + cam_y;
 
-    const uint8_t* p_flags = p;
-    int32_t loop_x = cur_x;
-    int32_t loop_y = cur_y;
-
-    int32_t start_flag_x = -1, start_flag_y = 0;
-    int32_t finish_flag_x = -1, finish_flag_y = 0;
     int found_start = 0, found_finish = 0;
+    int start_nx = 0, start_ny = 0, start_fx = 0, start_fy = 0;
+    int finish_nx = 0, finish_ny = 0, finish_fx = 0, finish_fy = 0;
+
+    int pnx, pny, pfx, pfy;
+    project_point(cur_x, cur_y, ox, oy, &pnx, &pny, &pfx, &pfy);
 
     for (int i = 0; i < points_count - 1; i++) {
-        int8_t dx = (int8_t)*p_flags++;
-        if (dx == -1) {
-            loop_x = convert_coord(read_be32(p_flags)); p_flags += 4;
-            loop_y = convert_coord(read_be32(p_flags)); p_flags += 4;
-            continue;
-        } else {
-            int8_t dy = (int8_t)*p_flags++;
-            loop_x += convert_coord(dx);
-            loop_y += convert_coord(dy);
-        }
-        if (!found_start && loop_x > start_threshold) {
-            start_flag_x = loop_x;
-            start_flag_y = loop_y;
-            found_start = 1;
-        }
-        if (!found_finish && loop_x > finish_threshold) {
-            finish_flag_x = loop_x;
-            finish_flag_y = loop_y;
-            found_finish = 1;
-        }
-    }
-
-    // Draw flags
-    if (found_start) {
-        int sfx = get_pixel_coord(start_flag_x) + ox;
-        int sfy = oy - get_pixel_coord(start_flag_y);
-        if (sfx >= -20 && sfx < SCREEN_WIDTH + 20) {
-            draw_line(sfx, sfy, sfx, sfy - 20, COLOR(0, 0, 0));
-            draw_rect(sfx, sfy - 20, 8, 5, COLOR(0, 31, 0));
-            draw_string(sfx - 10, sfy + 2, "START", COLOR(0, 0, 0));
-        }
-    }
-    if (found_finish) {
-        int ffx = get_pixel_coord(finish_flag_x) + ox;
-        int ffy = oy - get_pixel_coord(finish_flag_y);
-        if (ffx >= -20 && ffx < SCREEN_WIDTH + 20) {
-            draw_line(ffx, ffy, ffx, ffy - 20, COLOR(0, 0, 0));
-            draw_rect(ffx, ffy - 20, 8, 5, COLOR(31, 0, 0));
-            draw_string(ffx - 10, ffy + 2, "FINISH", COLOR(0, 0, 0));
-        }
-    }
-
-    for (int i = 0; i < points_count - 1; i++) {
-        int32_t next_x, next_y;
         int8_t dx = (int8_t)*p++;
         if (dx == -1) {
             cur_x = convert_coord(read_be32(p)); p += 4;
             cur_y = convert_coord(read_be32(p)); p += 4;
-        } else {
-            int8_t dy = (int8_t)*p++;
-            next_x = cur_x + convert_coord(dx);
-            next_y = cur_y + convert_coord(dy);
-            
-            int x1 = get_pixel_coord(cur_x) + ox;
-            int x2 = get_pixel_coord(next_x) + ox;
-
-            // Horizontal clipping
-            if (!((x1 < 0 && x2 < 0) || (x1 >= SCREEN_WIDTH && x2 >= SCREEN_WIDTH))) {
-                int y1 = oy - get_pixel_coord(cur_y);
-                int y2 = oy - get_pixel_coord(next_y);
-                draw_line(x1, y1, x2, y2, COLOR(0, 31, 0));
-            }
-
-            cur_x = next_x;
-            cur_y = next_y;
+            project_point(cur_x, cur_y, ox, oy, &pnx, &pny, &pfx, &pfy);
+            continue;
         }
+        int8_t dy = (int8_t)*p++;
+        int32_t next_x = cur_x + convert_coord(dx);
+        int32_t next_y = cur_y + convert_coord(dy);
+
+        int nnx, nny, nfx, nfy;
+        project_point(next_x, next_y, ox, oy, &nnx, &nny, &nfx, &nfy);
+
+        if (!seg_offscreen(pnx, nnx)) {
+            // Far edge (back) and connector rung, then bright near (riding) edge.
+            draw_line(pfx, pfy, nfx, nfy, COLOR(0, 13, 0));
+            draw_line(pnx, pny, pfx, pfy, COLOR(0, 13, 0));
+            draw_line(pnx, pny, nnx, nny, COLOR(0, 31, 0));
+        }
+
+        // Flag positions: first vertex past each threshold.
+        if (!found_start && next_x > start_threshold) {
+            start_nx = nnx; start_ny = nny; start_fx = nfx; start_fy = nfy;
+            found_start = 1;
+        }
+        if (!found_finish && next_x > finish_threshold) {
+            finish_nx = nnx; finish_ny = nny; finish_fx = nfx; finish_fy = nfy;
+            found_finish = 1;
+        }
+
+        cur_x = next_x; cur_y = next_y;
+        pnx = nnx; pny = nny; pfx = nfx; pfy = nfy;
     }
+
+    if (found_start)  draw_flag(start_nx, start_ny, start_fx, start_fy, 0);
+    if (found_finish) draw_flag(finish_nx, finish_ny, finish_fx, finish_fy, 1);
 }
