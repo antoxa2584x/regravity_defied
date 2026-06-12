@@ -134,7 +134,7 @@ void put_pixel(int x, int y, color_t color) {
     }
 }
 
-void draw_rect(int x, int y, int w, int h, color_t color) {
+IWRAM_FN void draw_rect(int x, int y, int w, int h, color_t color) {
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     if (x + w > SCREEN_WIDTH) w = SCREEN_WIDTH - x;
@@ -165,43 +165,69 @@ void draw_rect(int x, int y, int w, int h, color_t color) {
     }
 }
 
-void draw_char(int x, int y, char c, color_t color) {
+// Direct canvas writes (no per-pixel put_pixel call) so per-frame menu text is
+// cheap; the unsigned compares fold each clip test into one branch.
+IWRAM_FN void draw_char(int x, int y, char c, color_t color) {
     if (c >= 'a' && c <= 'z') c -= 32;
     if (c < 32 || c > 95) return;
-    int idx = (c - 32) * 5;
+    const uint8_t* g = &font5x7[(c - 32) * 5];
+    color_t* canvas = G_CANVAS;
     for (int col = 0; col < 5; col++) {
-        uint8_t bits = font5x7[idx + col];
-        for (int row = 0; row < 7; row++) {
-            if (bits & (1 << row)) {
-                put_pixel(x + col, y + row, color);
+        uint8_t bits = g[col];
+        int px = x + col;
+        if ((unsigned)px >= SCREEN_WIDTH) continue;
+        for (int row = 0; bits; row++, bits >>= 1) {
+            if (bits & 1) {
+                int py = y + row;
+                if ((unsigned)py < SCREEN_HEIGHT)
+                    canvas[py * SCREEN_WIDTH + px] = color;
             }
         }
     }
 }
 
-void draw_string(int x, int y, const char* str, color_t color) {
+IWRAM_FN void draw_string(int x, int y, const char* str, color_t color) {
     while (*str) {
         draw_char(x, y, *str++, color);
         x += 6;
     }
 }
 
-void draw_string_scaled(int x, int y, const char* str, color_t color, int scale) {
+// Each set font pixel becomes a scale x scale block written inline (no draw_rect
+// call per pixel — at 2x that was ~1400 calls/frame for the menu title).
+IWRAM_FN void draw_string_scaled(int x, int y, const char* str, color_t color, int scale) {
+    color_t* canvas = G_CANVAS;
     while (*str) {
         char c = *str++;
         if (c >= 'a' && c <= 'z') c -= 32;
         if (c >= 32 && c <= 95) {
-            int idx = (c - 32) * 5;
+            const uint8_t* g = &font5x7[(c - 32) * 5];
             for (int col = 0; col < 5; col++) {
-                uint8_t bits = font5x7[idx + col];
-                for (int row = 0; row < 7; row++) {
-                    if (bits & (1 << row))
-                        draw_rect(x + col * scale, y + row * scale, scale, scale, color);
+                uint8_t bits = g[col];
+                int bx = x + col * scale;
+                for (int row = 0; bits; row++, bits >>= 1) {
+                    if (!(bits & 1)) continue;
+                    int by = y + row * scale;
+                    for (int dy = 0; dy < scale; dy++) {
+                        int py = by + dy;
+                        if ((unsigned)py >= SCREEN_HEIGHT) continue;
+                        color_t* p = canvas + py * SCREEN_WIDTH + bx;
+                        for (int dx = 0; dx < scale; dx++)
+                            if ((unsigned)(bx + dx) < SCREEN_WIDTH) p[dx] = color;
+                    }
                 }
             }
         }
         x += 6 * scale;
     }
+}
+
+void draw_string_scaled_outlined(int x, int y, const char* str, color_t fg, color_t outline, int scale) {
+    draw_string_scaled(x - 1, y,     str, outline, scale);
+    draw_string_scaled(x + 1, y,     str, outline, scale);
+    draw_string_scaled(x,     y - 1, str, outline, scale);
+    draw_string_scaled(x,     y + 1, str, outline, scale);
+    draw_string_scaled(x,     y,     str, fg,      scale);
 }
 
 void draw_string_outlined(int x, int y, const char* str, color_t fg, color_t outline) {

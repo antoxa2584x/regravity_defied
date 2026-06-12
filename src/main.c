@@ -54,6 +54,13 @@ static void draw_menu_row(int y, const char* s, color_t color, int selected, int
     if (selected && blink) draw_string(x - 12, y, ">", color);
 }
 
+// As draw_menu_row, but with a 1px outline (used over the animated backdrop).
+static void draw_menu_row_outlined(int y, const char* s, color_t color, color_t outline, int selected, int blink) {
+    int x = (SCREEN_WIDTH - str_px_width(s)) / 2;
+    draw_string_outlined(x, y, s, color, outline);
+    if (selected && blink) draw_string_outlined(x - 12, y, ">", color, outline);
+}
+
 // Minimal string builders (no libc): append text / a non-negative int.
 static char* str_cat(char* d, const char* s) { while (*s) *d++ = *s++; *d = 0; return d; }
 static char* str_num(char* d, int n) {
@@ -92,6 +99,27 @@ static void format_delta(int frames, char* buf) {
     *p++ = '0' + (centis % 100) / 10;
     *p++ = '0' + (centis % 100) % 10;
     *p = 0;
+}
+
+// Semi-transparent waving checkered-flag backdrop. The "dark" squares are drawn
+// in a faint grey over the white cleared screen (no real alpha in MODE3, so a
+// light grey reads as a translucent black), and each column is displaced by a
+// travelling sine wave to suggest waving cloth. Drawn behind the menu text, so
+// the menu stays readable. `t` is a frame counter that drives the animation.
+#define CHK_CELL 24
+static void draw_checker_bg(int t) {
+    // One period of a sine, ~6px amplitude (no libm on the GBA).
+    static const signed char wave[16] =
+        { 0, 3, 5, 6, 6, 6, 5, 3, 0, -3, -5, -6, -6, -6, -5, -3 };
+    const color_t c = COLOR(58, 58, 58);   // faint grey ≈ translucent checker
+    for (int col = -1; col * CHK_CELL < SCREEN_WIDTH; col++) {
+        int x = col * CHK_CELL;
+        int yoff = wave[(col * 2 + t / 3) & 15];   // neighbouring columns ripple
+        for (int row = -1; row * CHK_CELL < SCREEN_HEIGHT + CHK_CELL; row++) {
+            if (((col + row) & 1) == 0) continue;  // checkerboard: alternate cells
+            draw_rect(x, row * CHK_CELL + yoff, CHK_CELL, CHK_CELL, c);
+        }
+    }
 }
 
 int main() {
@@ -138,6 +166,7 @@ int main() {
 
     uint16_t tm_prev = REG_TM0CNT_L;  // last timer sample
     int tm_accum = 0;                 // unspent time, in timer ticks
+    uint32_t clock_ticks = 0;         // wall-clock tick count (fps-independent)
 
     while (1) {
         uint16_t keys = ~REG_KEYINPUT & 0x03FF;
@@ -149,7 +178,9 @@ int main() {
         // keeping the simulation at full speed. Clamp to avoid a catch-up spiral
         // after a long stall (e.g. level load).
         uint16_t tm_now = REG_TM0CNT_L;
-        tm_accum += (uint16_t)(tm_now - tm_prev);
+        uint16_t dt = (uint16_t)(tm_now - tm_prev);
+        tm_accum += dt;
+        clock_ticks += dt;            // drives the blink at a steady wall-clock rate
         tm_prev = tm_now;
         int steps = tm_accum / TICKS_PER_STEP;
         if (steps > 4) { steps = 4; tm_accum = 0; }
@@ -321,7 +352,10 @@ int main() {
 
         frame++;
         // ~0.5 s on / 0.5 s off, drives blinking prompts and the menu cursor.
-        int blink = ((frame / 30) & 1) == 0;
+        // Timed off the wall-clock (TM0 = 16384 Hz, so 8192 ticks = 0.5 s) rather
+        // than the frame count, so the blink rate is steady even when a heavy
+        // screen (e.g. the animated league menu) renders below 60 fps.
+        int blink = ((clock_ticks / 8192) & 1) == 0;
         int blinking_state = (state == STATE_SPLASH ||
                               state == STATE_MENU_HARDNESS ||
                               state == STATE_MENU_TRACK ||
@@ -337,6 +371,7 @@ int main() {
         int transition = (int)state != prev_state;
         int do_fade = transition && prev_state >= 0 && state != STATE_FINISHED;
         int redraw = (state == STATE_GAME)
+                   || (state == STATE_MENU_HARDNESS)   // animated checker backdrop
                    || transition
                    || keys_pressed
                    || (blinking_state && blink != prev_blink);
@@ -357,10 +392,12 @@ int main() {
                 if (blink) draw_string(87, 120, "PRESS START", COLOR(0, 0, 0));
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
+                draw_checker_bg(frame);   // animated semi-transparent checkered flag
                 // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
+                // White 1px outline keeps it readable over the checkered backdrop.
                 int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
-                draw_string_scaled(title_x, 18, "Re", COLOR(0, 31, 0), 2);
-                draw_string_scaled(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), 2);
+                draw_string_scaled_outlined(title_x, 18, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
                 for (int i = 0; i < 3; i++) {
                     int prev = i > 0 ? level_track_count(mrg, i - 1) : 0;
                     int unlocked = league_unlocked(i, prev);
@@ -379,15 +416,15 @@ int main() {
                     color_t color = !unlocked ? COLOR(15, 15, 15)
                                   : (i == level_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
                     int row_y = 60 + i * 20;
-                    draw_menu_row(row_y, buf, color, i == level_idx, blink);
+                    draw_menu_row_outlined(row_y, buf, color, COLOR(31, 31, 31), i == level_idx, blink);
                     // Re-stamp the LOCKED word in red over the grey row.
                     if (!unlocked) {
                         int row_x = (SCREEN_WIDTH - str_px_width(buf)) / 2;
-                        draw_string(row_x + str_px_width(league_names[i]) + 12, row_y,
-                                    "LOCKED", COLOR(31, 8, 8));
+                        draw_string_outlined(row_x + str_px_width(league_names[i]) + 12, row_y,
+                                             "LOCKED", COLOR(31, 8, 8), COLOR(31, 31, 31));
                     }
                 }
-                draw_string_centered(140, "SELECT: SETTINGS", COLOR(10, 10, 10));
+                draw_string_centered_outlined(140, "SELECT: SETTINGS", COLOR(10, 10, 10), COLOR(31, 31, 31));
             } else if (state == STATE_SETTINGS) {
                 draw_string_centered(20, "SETTINGS", COLOR(0, 0, 0));
 

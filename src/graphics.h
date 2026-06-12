@@ -21,6 +21,8 @@ void draw_string_outlined(int x, int y, const char* str, color_t fg, color_t out
 // draw_string with each font pixel drawn as a scale x scale block (scale>=1).
 // Glyph advance is 6*scale px.
 void draw_string_scaled(int x, int y, const char* str, color_t color, int scale);
+// Scaled string with a 1px outline in `outline` behind `fg`.
+void draw_string_scaled_outlined(int x, int y, const char* str, color_t fg, color_t outline, int scale);
 void draw_line(int x1, int y1, int x2, int y2, color_t color);
 // Blit a sprite: each entry's bit15 set = opaque pixel (low 15 bits = color).
 void draw_sprite(int x, int y, const color_t* data, int w, int h);
