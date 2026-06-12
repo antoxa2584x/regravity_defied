@@ -55,6 +55,13 @@
 #define MODE3 0x0003
 #define BG2_ENABLE 0x0400
 
+// Brightness blend, used for screen fades. BLDCNT selects the target layer and
+// effect; BLDY is the 0..16 coefficient (0 = normal, 16 = fully black/white).
+#define REG_BLDCNT (*(volatile uint16_t*)0x04000050)
+#define REG_BLDY   (*(volatile uint16_t*)0x04000054)
+#define BLD_BG2     0x0004   // BG2 (the MODE3 bitmap) is the 1st-target layer
+#define BLD_DARKEN  0x00C0   // brightness-decrease mode (fade toward black)
+
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 160
 

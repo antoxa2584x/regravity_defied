@@ -6,10 +6,21 @@
 void clear_screen(color_t color);
 // Blit the back buffer to VRAM (call once per frame at VBlank start).
 void present_frame(void);
+// Blocking hardware brightness fades of the displayed BG2 bitmap (each spins a
+// few VBlanks). fade_out darkens whatever is currently in VRAM to black;
+// fade_in brings it back and disables the blend. Used for menu transitions.
+void fade_out(void);
+void fade_in(void);
 void put_pixel(int x, int y, color_t color);
 void draw_rect(int x, int y, int w, int h, color_t color);
 void draw_char(int x, int y, char c, color_t color);
 void draw_string(int x, int y, const char* str, color_t color);
+// draw_string with a 1px outline in `outline` behind `fg`, so HUD text stays
+// legible over any background (track lines, rider) without a solid box.
+void draw_string_outlined(int x, int y, const char* str, color_t fg, color_t outline);
+// draw_string with each font pixel drawn as a scale x scale block (scale>=1).
+// Glyph advance is 6*scale px.
+void draw_string_scaled(int x, int y, const char* str, color_t color, int scale);
 void draw_line(int x1, int y1, int x2, int y2, color_t color);
 // Blit a sprite: each entry's bit15 set = opaque pixel (low 15 bits = color).
 void draw_sprite(int x, int y, const color_t* data, int w, int h);

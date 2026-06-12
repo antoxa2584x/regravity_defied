@@ -42,6 +42,11 @@ static void draw_string_centered(int y, const char* s, color_t color) {
     draw_string((SCREEN_WIDTH - str_px_width(s)) / 2, y, s, color);
 }
 
+// Centered, outlined — used where text sits over the track or a bright panel.
+static void draw_string_centered_outlined(int y, const char* s, color_t fg, color_t outline) {
+    draw_string_outlined((SCREEN_WIDTH - str_px_width(s)) / 2, y, s, fg, outline);
+}
+
 // Centered menu row with a blinking selection cursor to its left.
 static void draw_menu_row(int y, const char* s, color_t color, int selected, int blink) {
     int x = (SCREEN_WIDTH - str_px_width(s)) / 2;
@@ -75,6 +80,18 @@ static void format_time(int frames, char* buf) {
     buf[6] = '0' + (centis / 10);
     buf[7] = '0' + (centis % 10);
     buf[8] = 0;
+}
+
+// Signed difference vs. the old best, as "-S.CC" (faster) or "+S.CC" (slower).
+static void format_delta(int frames, char* buf) {
+    char* p = buf;
+    if (frames < 0) { *p++ = '-'; frames = -frames; } else { *p++ = '+'; }
+    int centis = frames * 100 / 60;
+    p = str_num(p, centis / 100);     // whole seconds (may exceed 99)
+    *p++ = '.';
+    *p++ = '0' + (centis % 100) / 10;
+    *p++ = '0' + (centis % 100) % 10;
+    *p = 0;
 }
 
 int main() {
@@ -111,7 +128,11 @@ int main() {
     int finish_time = 0;
     int finish_new_best = 0;   // did the last finish set a record
     int finish_unlocked = 0;   // did the last finish unlock new content
+    int finish_delta = 0;      // finish_time - previous best (signed, frames)
+    int finish_has_delta = 0;  // was there a previous best to compare against
     int finish_x = 1000000;
+    int attempts = 0;          // crashes + 1 on the current track (the run count)
+    int crash_flash = 0;       // frames of red hit-flash still owed after a crash
     int prev_state = -1;   // force a redraw on the first frame
     int prev_blink = -1;
 
@@ -217,6 +238,8 @@ int main() {
                 cam_x = get_pixel_coord(player_bike.x);
                 cam_y = get_pixel_coord(player_bike.y);
                 timer = 0;
+                attempts = 1;       // this run; bumped on each crash-restart
+                crash_flash = 0;
                 get_track_flags(cur_track, NULL, NULL, &finish_x, NULL);
                 tm_accum = 0;  // don't dump menu idle time into the first tick
               }
@@ -243,6 +266,8 @@ int main() {
                     init_bike(&player_bike, cur_track);
                     update_physics(&player_bike, cur_track, 0);
                     timer = 0;
+                    attempts++;
+                    crash_flash = 6;   // ~0.1s red hit-flash
                 }
                 timer++;
                 if (get_pixel_coord(player_bike.x) >= finish_x) {
@@ -252,6 +277,11 @@ int main() {
                     // whether a new track or league just opened up.
                     int tc = level_track_count(mrg, level_idx);
                     int was_done = g_save.completed[level_idx][track_idx];
+                    // Capture the prior best *before* record_finish overwrites it
+                    // so the finish screen can show the delta.
+                    uint32_t prev_best = g_save.best[level_idx][track_idx];
+                    finish_has_delta = prev_best != 0;
+                    finish_delta = (int)finish_time - (int)prev_best;
                     finish_new_best = record_finish(level_idx, track_idx, finish_time);
                     finish_unlocked = 0;
                     if (!was_done) {
@@ -301,12 +331,21 @@ int main() {
         // key press. Static screens (intro, finished) are drawn once and skip
         // both the redraw and the back-buffer->VRAM copy below, so an idle menu
         // costs almost nothing.
+        // A screen change (not the very first frame) gets a fade transition.
+        // The finish modal is excluded: it should pop up instantly over the
+        // frozen track rather than fading the gameplay away.
+        int transition = (int)state != prev_state;
+        int do_fade = transition && prev_state >= 0 && state != STATE_FINISHED;
         int redraw = (state == STATE_GAME)
-                   || ((int)state != prev_state)
+                   || transition
                    || keys_pressed
                    || (blinking_state && blink != prev_blink);
         prev_state = state;
         prev_blink = blink;
+
+        // Fade the outgoing screen (still in VRAM) to black before drawing the
+        // new one over it; the matching fade-in runs after present_frame below.
+        if (do_fade) fade_out();
 
         if (redraw) {
             clear_screen(state == STATE_INTRO ? COLOR(0, 0, 0) : COLOR(31, 31, 31));
@@ -318,10 +357,10 @@ int main() {
                 if (blink) draw_string(87, 120, "PRESS START", COLOR(0, 0, 0));
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
-                // Title "ReGravity Defied": "Re" green, the rest black, centered.
-                int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied")) / 2;
-                draw_string(title_x, 20, "Re", COLOR(0, 31, 0));
-                draw_string(title_x + str_px_width("Re"), 20, "Gravity Defied", COLOR(0, 0, 0));
+                // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
+                int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                draw_string_scaled(title_x, 18, "Re", COLOR(0, 31, 0), 2);
+                draw_string_scaled(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), 2);
                 for (int i = 0; i < 3; i++) {
                     int prev = i > 0 ? level_track_count(mrg, i - 1) : 0;
                     int unlocked = league_unlocked(i, prev);
@@ -339,7 +378,14 @@ int main() {
                     }
                     color_t color = !unlocked ? COLOR(15, 15, 15)
                                   : (i == level_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                    draw_menu_row(60 + i * 20, buf, color, i == level_idx, blink);
+                    int row_y = 60 + i * 20;
+                    draw_menu_row(row_y, buf, color, i == level_idx, blink);
+                    // Re-stamp the LOCKED word in red over the grey row.
+                    if (!unlocked) {
+                        int row_x = (SCREEN_WIDTH - str_px_width(buf)) / 2;
+                        draw_string(row_x + str_px_width(league_names[i]) + 12, row_y,
+                                    "LOCKED", COLOR(31, 8, 8));
+                    }
                 }
                 draw_string_centered(140, "SELECT: SETTINGS", COLOR(10, 10, 10));
             } else if (state == STATE_SETTINGS) {
@@ -360,9 +406,9 @@ int main() {
                 draw_string_centered(125, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
                 draw_string_centered(140, "B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_ABOUT) {
-                int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied")) / 2;
-                draw_string(tx, 18, "Re", COLOR(0, 31, 0));
-                draw_string(tx + str_px_width("Re"), 18, "Gravity Defied", COLOR(0, 0, 0));
+                int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
+                draw_string_scaled(tx + str_px_width("Re") * 2, 14, "Gravity Defied", COLOR(0, 0, 0), 2);
                 draw_string_centered(44, "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
                 draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
                 draw_string_centered(86, "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
@@ -375,8 +421,10 @@ int main() {
                 draw_string_centered(76, "AND BEST TIMES?", COLOR(31, 31, 31));
                 draw_string_centered(92, "A: YES    B: NO", COLOR(31, 31, 0));
             } else if (state == STATE_MENU_TRACK) {
-                draw_string_centered(10, "SELECT TRACK", COLOR(0, 0, 0));
-                draw_string_centered(24, "BEST TIMES", COLOR(12, 12, 12));
+                // Left rail = scrolling list of names; right pane = detail card
+                // (best time + medal + status) for the highlighted track.
+                draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
+                draw_line(120, 22, 120, 140, COLOR(18, 18, 18));   // rail/pane divider
 
                 int prev = level_idx > 0 ? level_track_count(mrg, level_idx - 1) : 0;
                 const uint8_t* p = mrg;
@@ -390,41 +438,74 @@ int main() {
                 }
                 uint32_t count = read_be32(p);
                 const uint8_t* track_info = p + 4;
+                const char* sel_name = "";   // captured for the detail pane
                 for (int t = 0; t < (int)count; t++) {
                     track_info += 4;
                     const char* name = (const char*)track_info;
+                    if (t == track_idx) sel_name = name;
 
+                    // Window of 7 names around the cursor, left rail only.
                     if (t >= track_idx - 3 && t <= track_idx + 3) {
                         int unlocked = track_unlocked(level_idx, t, prev);
-                        char buf[30];
-                        char* e = str_cat(buf, name);
-                        e = str_cat(e, "  ");
-                        if (!unlocked) {
-                            str_cat(e, "LOCKED");
-                        } else if (g_save.best[level_idx][t]) {
-                            char tb[10];
-                            format_time(g_save.best[level_idx][t], tb);
-                            str_cat(e, tb);
-                        } else {
-                            str_cat(e, "--:--.--");
-                        }
                         color_t color = !unlocked ? COLOR(15, 15, 15)
                                       : (t == track_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                        int y_pos = 44 + (t - (track_idx - 3)) * 12;
-                        draw_menu_row(y_pos, buf, color, t == track_idx, blink);
+                        int y_pos = 32 + (t - (track_idx - 3)) * 14;
+                        if (t == track_idx && blink) draw_string(6, y_pos, ">", color);
+                        draw_string(16, y_pos, name, color);
+                        if (g_save.completed[level_idx][t])      // tick = cleared
+                            draw_string(16 + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
                     }
 
                     while (*track_info) track_info++;
                     track_info++;
                 }
+
+                // ---- Detail pane (centered on x = 180) ----
+                const int pcx = 180;
+                int sel_unlocked = track_unlocked(level_idx, track_idx, prev);
+                uint32_t sel_best = g_save.best[level_idx][track_idx];
+
+                draw_string(pcx - str_px_width(sel_name) / 2, 30, sel_name, COLOR(0, 0, 0));
+                draw_string(pcx - str_px_width("BEST") / 2, 48, "BEST", COLOR(12, 12, 12));
+
+                char tb[10];
+                if (sel_best) format_time(sel_best, tb); else str_cat(tb, "--:--.--");
+                color_t tcol = sel_best ? COLOR(0, 24, 0) : COLOR(14, 14, 14);
+                draw_string(pcx - str_px_width(tb) / 2, 60, tb, tcol);
+
+                {
+                    // Scaled silhouette of the whole track in a framed box.
+                    // Locked tracks still show their shape, but greyed out with a
+                    // LOCKED label over it instead of the usual green trace.
+                    const int bw = 92, bh = 46, bx = pcx - bw / 2, by = 76;
+                    draw_rect(bx - 1, by - 1, bw + 2, bh + 2, COLOR(16, 16, 16));
+                    draw_rect(bx, by, bw, bh, COLOR(31, 31, 31));
+                    color_t trace = sel_unlocked ? COLOR(0, 22, 0) : COLOR(18, 18, 18);
+                    draw_track_preview(get_track_data(mrg, level_idx, track_idx), bx, by, bw, bh, trace);
+                    if (!sel_unlocked) {
+                        const char* lk = "LOCKED";
+                        draw_string_outlined(pcx - str_px_width(lk) / 2, by + bh / 2 - 3,
+                                             lk, COLOR(31, 8, 8), COLOR(31, 31, 31));
+                    }
+                }
+
+                draw_string_centered(150, "A: START   B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_GAME || state == STATE_TRACK_VIEW || state == STATE_FINISHED) {
-                // Draw HUD first — it sits at y=10 (top of screen). If we drew it
-                // last and rendering overflowed VBlank, the scan line would have
-                // already passed row 10, causing every-other-frame flickering.
+                // Draw HUD first — it sits at the top of the screen. If we drew
+                // it last and rendering overflowed VBlank, the scan line would
+                // have already passed those rows, causing every-other-frame
+                // flickering. Outlined so it stays legible over track lines.
                 if (state == STATE_GAME) {
                     char time_buf[10];
                     format_time(timer, time_buf);
-                    draw_string(10, 10, time_buf, COLOR(0, 0, 0));
+                    draw_string_outlined(10, 10, time_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
+
+                    // Run counter, top-right ("x3" = on the third attempt).
+                    char run_buf[16];
+                    char* e = str_cat(run_buf, "x");
+                    str_num(e, attempts);
+                    draw_string_outlined(SCREEN_WIDTH - str_px_width(run_buf) - 10, 10,
+                                         run_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
                 }
 
                 draw_track(cur_track, cam_x, cam_y);
@@ -432,17 +513,34 @@ int main() {
                     draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
                 }
 
+                // Crash hit-flash overlays the whole scene for a few frames.
+                if (state == STATE_GAME && crash_flash > 0) {
+                    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
+                    draw_string_centered_outlined(76, "CRASH!", COLOR(31, 31, 31), COLOR(0, 0, 0));
+                }
+
                 if (state == STATE_FINISHED) {
-                    draw_rect(50, 50, 140, 60, COLOR(31, 31, 31));
-                    draw_rect(52, 52, 136, 56, COLOR(0, 0, 0));
-                    draw_string_centered(60, "FINISHED!", COLOR(31, 31, 31));
+                    draw_rect(44, 48, 152, 70, COLOR(31, 31, 31));
+                    draw_rect(46, 50, 148, 66, COLOR(0, 0, 0));
+                    draw_string_centered(56, "FINISHED!", COLOR(31, 31, 31));
+
                     char time_buf[10];
                     format_time(finish_time, time_buf);
-                    draw_string_centered(74, time_buf, COLOR(0, 31, 0));
+                    draw_string_centered(70, time_buf, COLOR(0, 31, 0));
+
+                    // Delta vs. the previous best (omitted on a first clear).
+                    if (finish_has_delta) {
+                        char dbuf[12];
+                        format_delta(finish_delta, dbuf);
+                        // Faster = negative = green; slower = positive = red.
+                        color_t dcol = finish_delta <= 0 ? COLOR(0, 31, 0) : COLOR(31, 8, 8);
+                        draw_string_centered(82, dbuf, dcol);
+                    }
+
                     if (finish_unlocked)
-                        draw_string_centered(88, "UNLOCKED NEXT!", COLOR(0, 31, 31));
+                        draw_string_centered(98, "UNLOCKED NEXT!", COLOR(0, 31, 31));
                     else if (finish_new_best)
-                        draw_string_centered(88, "NEW BEST TIME!", COLOR(31, 31, 0));
+                        draw_string_centered(98, "NEW BEST TIME!", COLOR(31, 31, 0));
                 }
             }
         }
@@ -453,7 +551,17 @@ int main() {
         // not redraw: VRAM already holds the last presented frame.
         vsync();
         if (redraw) present_frame();
+
+        // Bring the freshly drawn screen up from black. The blocking fades ate
+        // real time the fixed-timestep clock must not bank, or the first game
+        // step would jump; resync the accumulator after the transition.
+        if (do_fade) {
+            fade_in();
+            tm_prev = REG_TM0CNT_L;
+            tm_accum = 0;
+        }
         sound_tick();
+        if (crash_flash > 0) crash_flash--;
     }
 
     return 0;

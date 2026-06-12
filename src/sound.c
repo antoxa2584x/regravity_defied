@@ -8,7 +8,11 @@
 #define PLAY_TICKS ((int)((long long)WILHELM_LEN * TIMER0_HZ / SOUND_SAMPLE_RATE))
 
 static int playing = 0;
+static int draining = 0;      // clocking silence through the DAC before stopping
 static uint16_t play_start;   // Timer 0 reading when playback began
+
+// Direct FIFO A write port (each 32-bit word = 4 signed 8-bit samples).
+#define FIFO_A (*(volatile uint32_t*)REG_FIFO_A)
 
 void sound_init(void) {
     REG_SOUNDBIAS  = 0x0200;   // default output bias
@@ -33,13 +37,30 @@ void sound_play_crash(void) {
 
     play_start = REG_TM0CNT_L;
     playing = 1;
+    draining = 0;
 }
 
 void sound_tick(void) {
+    if (draining) {
+        // The silence written last frame has been clocked out, so the DAC now
+        // sits at zero. Safe to fully stop without a pop.
+        REG_DMA1CNT_H = 0;
+        REG_TM1CNT_H  = 0;
+        draining = 0;
+        return;
+    }
     if (!playing) return;
     if ((uint16_t)(REG_TM0CNT_L - play_start) >= PLAY_TICKS) {
-        REG_DMA1CNT_H = 0;            // stop feeding the FIFO past the buffer end
-        REG_TM1CNT_H = 0;
+        // End of clip. If we just stopped Timer 1 here, the DAC would hold the
+        // last (non-zero) sample as a DC offset — an audible pop. Instead stop
+        // the DMA, flush the FIFO, and push a few zero samples so the next
+        // values clocked to the DAC are silence. Timer 1 keeps running this
+        // frame to consume them; the hard stop happens next tick (draining).
+        REG_DMA1CNT_H  = 0;          // stop feeding the FIFO from the sample buffer
+        REG_SOUNDCNT_H |= 0x0800;    // reset FIFO A (auto-clears)
+        FIFO_A = 0;                  // 8 samples of silence — plenty to span one
+        FIFO_A = 0;                  // frame at 16 kHz before the next tick stops
         playing = 0;
+        draining = 1;
     }
 }

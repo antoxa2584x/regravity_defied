@@ -110,6 +110,24 @@ void present_frame(void) {
     }
 }
 
+// ~6 VBlanks per direction: snappy but visibly smooth. The blend is a free
+// hardware post-effect, so the framebuffer is untouched during the fade.
+#define FADE_STEP 3
+
+void fade_out(void) {
+    REG_BLDCNT = BLD_BG2 | BLD_DARKEN;
+    for (int y = 0; y < 16; y += FADE_STEP) { vsync(); REG_BLDY = y; }
+    vsync(); REG_BLDY = 16;
+}
+
+void fade_in(void) {
+    REG_BLDCNT = BLD_BG2 | BLD_DARKEN;
+    for (int y = 16; y > 0; y -= FADE_STEP) { vsync(); REG_BLDY = y; }
+    vsync();
+    REG_BLDY = 0;
+    REG_BLDCNT = 0;   // disable the blend so normal display is unaffected
+}
+
 void put_pixel(int x, int y, color_t color) {
     if (x >= 0 && x < SCREEN_WIDTH && y >= 0 && y < SCREEN_HEIGHT) {
         G_CANVAS[y * SCREEN_WIDTH + x] = color;
@@ -166,6 +184,34 @@ void draw_string(int x, int y, const char* str, color_t color) {
         draw_char(x, y, *str++, color);
         x += 6;
     }
+}
+
+void draw_string_scaled(int x, int y, const char* str, color_t color, int scale) {
+    while (*str) {
+        char c = *str++;
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c >= 32 && c <= 95) {
+            int idx = (c - 32) * 5;
+            for (int col = 0; col < 5; col++) {
+                uint8_t bits = font5x7[idx + col];
+                for (int row = 0; row < 7; row++) {
+                    if (bits & (1 << row))
+                        draw_rect(x + col * scale, y + row * scale, scale, scale, color);
+                }
+            }
+        }
+        x += 6 * scale;
+    }
+}
+
+void draw_string_outlined(int x, int y, const char* str, color_t fg, color_t outline) {
+    // 4-neighbour halo, then the glyph on top. Cheap (5 passes of a 5x7 font)
+    // and enough to keep text readable over the track without a backing box.
+    draw_string(x - 1, y,     str, outline);
+    draw_string(x + 1, y,     str, outline);
+    draw_string(x,     y - 1, str, outline);
+    draw_string(x,     y + 1, str, outline);
+    draw_string(x,     y,     str, fg);
 }
 
 IWRAM_FN void draw_sprite(int x, int y, const color_t* data, int w, int h) {
