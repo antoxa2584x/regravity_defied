@@ -29,6 +29,12 @@ OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS_C)) \
 # Default target
 all: $(TARGET).gba
 
+# Regenerate the committed asset headers from assets/ (needs Pillow + miniaudio).
+.PHONY: assets
+assets:
+	$(PYTHON) tools/convert_assets.py
+	$(PYTHON) tools/convert_sound.py
+
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -58,4 +64,7 @@ $(TARGET).gba: $(TARGET).elf
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET).elf $(TARGET).gba
 
-.PHONY: all clean
+debug: CFLAGS += -DDEBUG
+debug: all
+
+.PHONY: all clean debug

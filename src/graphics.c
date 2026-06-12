@@ -61,22 +61,58 @@ const uint8_t font5x7[] = {
     0x63, 0x14, 0x08, 0x14, 0x63, // X
     0x07, 0x08, 0x70, 0x08, 0x07, // Y
     0x61, 0x51, 0x49, 0x45, 0x43, // Z
+    0x00, 0x7F, 0x41, 0x41, 0x00, // [
+    0x02, 0x04, 0x08, 0x10, 0x20, // backslash
+    0x00, 0x41, 0x41, 0x7F, 0x00, // ]
+    0x04, 0x02, 0x01, 0x02, 0x04, // ^
+    0x40, 0x40, 0x40, 0x40, 0x40, // _  (underscore, for the repo URL)
 };
 
 // Source word for DMA fill — must live in RAM (IWRAM via .bss).
 static uint32_t dma_fill_word;
 
+// Off-screen back buffer: all drawing targets this, and present_frame() blits
+// it to VRAM during VBlank. Single-buffered MODE3 has no page flip, so without
+// this the renderer races the beam and the last things drawn (the rider) tear.
+// On the host harness the "VRAM" is just g_vram_buf, so draw straight into it.
+#ifdef HOST_BUILD
+extern uint16_t g_vram_buf[];
+#define G_CANVAS ((color_t*)g_vram_buf)
+#else
+static color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((section(".ewram")));
+#define G_CANVAS g_backbuf
+#endif
+
 void clear_screen(color_t color) {
     dma_fill_word = color | ((uint32_t)color << 16);
     REG_DMA3SAD   = (uint32_t)&dma_fill_word;
-    REG_DMA3DAD   = VRAM;
+    REG_DMA3DAD   = (uint32_t)G_CANVAS;
     REG_DMA3CNT_L = SCREEN_WIDTH * SCREEN_HEIGHT / 2; // 32-bit word count
     REG_DMA3CNT_H = DMA_ENABLE_32_SRCFIX;              // start immediately, halts CPU until done
 }
 
+// Blit the back buffer to VRAM. Call right after VBlank starts: the DMA copies
+// linearly and outruns the scan beam, so the whole frame appears tear-free.
+//
+// Copied in horizontal bands instead of one blocking transfer: a full-screen
+// DMA blocks the bus for ~6ms, far longer than the DirectSound FIFO's ~1ms of
+// buffer, which would make a playing SFX glitch every frame. The sound FIFO DMA
+// (DMA1) outranks DMA3, so it refills between bands; each band is ~0.3ms, well
+// inside the FIFO budget.
+void present_frame(void) {
+    enum { BANDS = 20, ROWS = SCREEN_HEIGHT / BANDS };  // 8 rows per band
+    for (int b = 0; b < BANDS; b++) {
+        int off = b * ROWS * SCREEN_WIDTH;              // offset in pixels
+        REG_DMA3SAD   = (uint32_t)(G_CANVAS + off);
+        REG_DMA3DAD   = VRAM + off * 2;                 // VRAM offset in bytes
+        REG_DMA3CNT_L = SCREEN_WIDTH * ROWS / 2;        // 32-bit word count
+        REG_DMA3CNT_H = DMA_ENABLE_32;
+    }
+}
+
 void put_pixel(int x, int y, color_t color) {
     if (x >= 0 && x < SCREEN_WIDTH && y >= 0 && y < SCREEN_HEIGHT) {
-        ((color_t*)VRAM)[y * SCREEN_WIDTH + x] = color;
+        G_CANVAS[y * SCREEN_WIDTH + x] = color;
     }
 }
 
@@ -87,7 +123,7 @@ void draw_rect(int x, int y, int w, int h, color_t color) {
     if (y + h > SCREEN_HEIGHT) h = SCREEN_HEIGHT - y;
     if (w <= 0 || h <= 0) return;
 
-    color_t* vram = (color_t*)VRAM;
+    color_t* vram = G_CANVAS;
     uint32_t c32 = color | (color << 16);
 
     for (int j = 0; j < h; j++) {
@@ -113,7 +149,7 @@ void draw_rect(int x, int y, int w, int h, color_t color) {
 
 void draw_char(int x, int y, char c, color_t color) {
     if (c >= 'a' && c <= 'z') c -= 32;
-    if (c < 32 || c > 90) return;
+    if (c < 32 || c > 95) return;
     int idx = (c - 32) * 5;
     for (int col = 0; col < 5; col++) {
         uint8_t bits = font5x7[idx + col];
@@ -137,7 +173,7 @@ IWRAM_FN void draw_sprite(int x, int y, const color_t* data, int w, int h) {
     int cy0 = y < 0 ? 0 : y;
     int cx1 = x + w > SCREEN_WIDTH  ? SCREEN_WIDTH  : x + w;
     int cy1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
-    color_t* vram = (color_t*)VRAM;
+    color_t* vram = G_CANVAS;
     for (int row = cy0; row < cy1; row++) {
         const color_t* src = data + (row - y) * w + (cx0 - x);
         color_t*       dst = vram + row * SCREEN_WIDTH + cx0;
@@ -157,7 +193,7 @@ IWRAM_FN void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
     int cy0 = y < 0 ? 0 : y;
     int cx1 = x + fw > SCREEN_WIDTH  ? SCREEN_WIDTH  : x + fw;
     int cy1 = y + fh > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + fh;
-    color_t* vram = (color_t*)VRAM;
+    color_t* vram = G_CANVAS;
     for (int row = cy0; row < cy1; row++) {
         const color_t* src = sheet + (sy + row - y) * sheet_w + sx + (cx0 - x);
         color_t*       dst = vram + row * SCREEN_WIDTH + cx0;
@@ -178,7 +214,7 @@ IWRAM_FN void fill_circle(int cx, int cy, int r, color_t color) {
 }
 
 IWRAM_FN void draw_line(int x1, int y1, int x2, int y2, color_t color) {
-    color_t* fb = (color_t*)VRAM;
+    color_t* fb = G_CANVAS;
 
     // Fast path for vertical lines
     if (x1 == x2) {

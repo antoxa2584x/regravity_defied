@@ -738,6 +738,37 @@ static int calc_sprite_no(int angleF16, int off, int span, int frames, int mirro
 
 #define TWO_PI_F16 411774
 
+// Rider pose tables — reference GamePhysics hardcodedArr1/2/3 (the sprite-driver
+// path). Each of the 8 entries is [up-axis offset, forward-axis offset] in the
+// reference's internal F16 units; we halve them at use time to reach this
+// engine's node units (nx = mc >> 1). Point roles (renderSmth switch order):
+//   0,1 = leg chain   2 = torso top   3 = head/helmet center
+//   4 = shoulder/arm end   5 = foot   6,7 = hand/joint dots (not drawn)
+static const int rider_pose_neutral[8][2] = {  // arr1: neutral
+    {183500,-52428},{262144,-163840},{406323,-65536},{445644,-39321},
+    {235929,39321},{16384,-144179},{13107,-78643},{288358,81920}};
+static const int rider_pose_back[8][2] = {     // arr2: full back lean (field_37=0)
+    {190054,-111411},{308019,-235929},{334233,-114688},{393216,-58982},
+    {262144,98304},{65536,-124518},{13107,-78643},{288358,81920}};
+static const int rider_pose_fwd[8][2] = {      // arr3: full forward lean (field_37=65536)
+    {157286,13107},{294912,-13107},{367001,91750},{406323,190054},
+    {347340,72089},{39321,-98304},{13107,-52428},{294912,81920}};
+
+// Draw one rider limb: placed at the tF16 interpolation point between (x1,y1) and
+// (x2,y2) (node units), oriented by the segment angle. 16 frames span [0,pi),
+// 6 columns per sheet row — matches reference GameCanvas.renderBodyPart.
+static void draw_body_part(int x1, int y1, int x2, int y2,
+                           const color_t* sheet, int sheet_w, int fw, int fh,
+                           int tF16, int ox, int oy) {
+    int mx = x1 + mulF(x2 - x1, tF16);
+    int my = y1 + mulF(y2 - y1, tF16);
+    int px = get_pixel_coord(mx) + ox;
+    int py = oy - get_pixel_coord(my);
+    int frame = calc_sprite_no(atan2_f16(x2 - x1, y2 - y1), 0, PI_F16, 16, 0);
+    draw_sprite_frame(px - fw / 2, py - fh / 2, sheet, sheet_w, fw, fh, frame);
+}
+
+
 void draw_bike(Bike* b, int ox, int oy) {
     int nx[6], ny[6], px[6], py[6];
     for (int i = 0; i < 6; i++) {
@@ -747,13 +778,13 @@ void draw_bike(Bike* b, int ox, int oy) {
         py[i] = oy - get_pixel_coord(ny[i]);
     }
 
-    // Bike forward direction (fork -> rear mount), normalised so the larger
-    // component is 1.0 in F16 — matches the reference's getSmthLikeMaxAbs.
+    // Bike forward direction (fork -> rear mount), normalised to a ~unit-length
+    // F16 vector via smth_max_abs (the reference's getSmthLikeMaxAbs). v10 = -uy
+    // gives the perpendicular up-axis component.
     int dx = nx[3] - nx[4], dy = ny[3] - ny[4];
-    int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
-    int m = adx > ady ? adx : ady;
+    int m = smth_max_abs(dx, dy);
     int ux = 0, uy = 0;
-    if (m) { ux = (int)((int64_t)dx << 16) / m; uy = (int)((int64_t)dy << 16) / m; }
+    if (m) { ux = divF(dx, m); uy = divF(dy, m); }
     int v10 = -uy;
 
     // Engine sits between frame(0) and fork(3); fender between frame(0) and
@@ -785,28 +816,66 @@ void draw_bike(Bike* b, int ox, int oy) {
     draw_sprite(px[2] - WHEEL_THIN_W / 2, py[2] - WHEEL_THIN_H / 2, rear_tire, WHEEL_THIN_W, WHEEL_THIN_H);
     draw_sprite(px[1] - WHEEL_THIN_W / 2, py[1] - WHEEL_THIN_H / 2, front_tire, WHEEL_THIN_W, WHEEL_THIN_H);
 
-    // Rider. Use the physical frame direction (node 0 -> upper frame midpoint)
-    // as the up-vector — far more stable than the wheel axis, which jerks
-    // whenever one wheel hits a bump independently.
-    int wfx = nx[1] - nx[2], wfy = ny[1] - ny[2];  // wheel axis, still needed for helmetAngle
+    // Rider: articulated body (legs + torso + arm + helmet), reference
+    // GamePhysics.renderSmth sprite path. Every pose point is anchored to the
+    // chassis as  node[0] + up_axis*pose[i][0] + forward_axis*pose[i][1], with
+    //   forward axis (ux, uy) = fork(3) -> rear mount(4) (normalised above)
+    //   up axis      (v10, ux) = forward rotated +90deg  (= (0,1) on flat ground)
+    // field_37 (0..65536, 32768 = neutral) blends back<->neutral<->forward pose
+    // tables, so the limbs lean front/back with the d-pad tilt while staying
+    // locked to the bike. Reference offsets are internal F16; halve (>>1) into
+    // node units. The body-anchor interpolation factor (riderPoseBlendTable) is
+    // blended the same way.
+    const int (*pose_a)[2];   // blend source (t=0)
+    const int (*pose_b)[2];   // blend dest   (t=65536)
+    int blend_t, blend_idx;
+    if (field_37 < 32768) {
+        pose_a = rider_pose_back; pose_b = rider_pose_neutral;
+        blend_t = mulF(field_37, 131072); blend_idx = 0;
+    } else if (field_37 > 32768) {
+        pose_a = rider_pose_neutral; pose_b = rider_pose_fwd;
+        blend_t = mulF(field_37 - 32768, 131072); blend_idx = 1;
+    } else {
+        pose_a = pose_b = rider_pose_neutral;
+        blend_t = 65536; blend_idx = 0;
+    }
 
-    int seat_x = (nx[3] + nx[4]) / 2, seat_y = (ny[3] + ny[4]) / 2;
-    int upx = seat_x - nx[0], upy = seat_y - ny[0];  // frame up: bottom to upper frame
-    int aupx = upx < 0 ? -upx : upx, aupy = upy < 0 ? -upy : upy;
-    int uhyp = (aupx > aupy) ? aupx + aupy * 3 / 8 : aupy + aupx * 3 / 8;
-    if (uhyp < 1) uhyp = 1;
-    int unx = (int)((int64_t)upx << 16) / uhyp;
-    int uny = (int)((int64_t)upy << 16) / uhyp;
+    // Only points 0..5 are drawn (legs/torso/arm/helmet); pose entries 6,7 are
+    // the reference's hand-dot sprites, which we don't render — so skip them.
+    int rx[6], ry[6];
+    int wt0 = 65536 - blend_t;
+    for (int i = 0; i < 6; i++) {
+        int up  = (mulF(pose_a[i][0], wt0) + mulF(pose_b[i][0], blend_t)) >> 1;
+        int fwd = (mulF(pose_a[i][1], wt0) + mulF(pose_b[i][1], blend_t)) >> 1;
+        rx[i] = nx[0] + mulF(v10, up) + mulF(ux, fwd);
+        ry[i] = ny[0] + mulF(ux,  up) + mulF(uy, fwd);
+    }
 
-    int head_x = seat_x + (int)((int64_t)unx * 345760 >> 16);
-    int head_y = seat_y + (int)((int64_t)uny * 345760 >> 16);
-    int spx = get_pixel_coord(seat_x) + ox, spy = oy - get_pixel_coord(seat_y);
-    int hpx = get_pixel_coord(head_x) + ox, hpy = oy - get_pixel_coord(head_y);
+    static const int blend_tbl[3] = {45875, 32768, 52428};
+    int body_t = mulF(blend_tbl[blend_idx],     wt0)
+               + mulF(blend_tbl[blend_idx + 1], blend_t);
 
-    draw_line(spx, spy, hpx, hpy, COLOR(4, 8, 28));   // torso
+    // Back-to-front: two leg segments, torso, arm.
+    draw_body_part(rx[5], ry[5], rx[0], ry[0], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[0], ry[0], rx[1], ry[1], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[1], ry[1], rx[2], ry[2], body_sheet, BODY_SHEET_W, BODY_SHEET_FW, BODY_SHEET_FH, body_t, ox, oy);
+    draw_body_part(rx[2], ry[2], rx[4], ry[4], arm_sheet,  ARM_SHEET_W,  ARM_SHEET_FW,  ARM_SHEET_FH,  32768,  ox, oy);
 
-    int helmetAngle = atan2_f16(wfx, wfy);
+    // Helmet at pose point 3; angle locked to bike rotation. atan2(dx, dy) is
+    // 102944 (pi/2) on flat ground — the helmet sheet's calibration base — and a
+    // discrete +20588 (~18deg) pose offset is added in the forward lean.
+    int hpx = get_pixel_coord(rx[3]) + ox, hpy = oy - get_pixel_coord(ry[3]);
+    int helmetAngle = atan2_f16(dx, dy);
+    if (field_37 > 32768) helmetAngle += 20588;
     int hframe = calc_sprite_no(helmetAngle, -102943, TWO_PI_F16, 32, 1);
     draw_sprite_frame(hpx - HELMET_SHEET_FW / 2, hpy - HELMET_SHEET_FH / 2,
                       helmet_sheet, HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
+
+#ifdef DEBUG
+    debug_log("f37", field_37);
+    debug_log("frm", hframe);
+    debug_log("hpx", hpx);
+    debug_log("hpy", hpy);
+    debug_log("acc", isInputAcceleration);
+#endif
 }

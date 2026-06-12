@@ -26,6 +26,13 @@ SECTIONS {
         __bss_end = .;
     } > iwram
 
+    /* Large, never-zeroed buffers (the frame back buffer) live in EWRAM.
+       NOLOAD: not in the ROM image and skipped by the crt0 BSS clear — the
+       back buffer is fully overwritten by clear_screen every frame anyway. */
+    .ewram (NOLOAD) : {
+        *(.ewram*)
+    } > ewram
+
     /* Hot physics code placed in IWRAM (0 wait states) after BSS.
        LMA in ROM (after .data); copied to IWRAM at boot by crt0.s. */
     .iwram.text : {

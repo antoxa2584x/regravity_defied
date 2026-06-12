@@ -16,6 +16,19 @@ int get_pixel_coord(int32_t internal) {
     return (int)((int32_t)internal << 3) >> 16;
 }
 
+int level_track_count(const uint8_t* mrg, int level_idx) {
+    const uint8_t* p = mrg;
+    for (int l = 0; l < level_idx; l++) {
+        uint32_t count = read_be32(p);
+        p += 4;
+        for (int t = 0; t < (int)count; t++) {
+            p += 4;
+            while (*p++) ;
+        }
+    }
+    return (int)read_be32(p);
+}
+
 const uint8_t* get_track_data(const uint8_t* mrg, int level_idx, int track_idx) {
     const uint8_t* p = mrg;
     for (int l = 0; l < level_idx; l++) {

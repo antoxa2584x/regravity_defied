@@ -4,6 +4,8 @@
 #include "gba.h"
 
 void clear_screen(color_t color);
+// Blit the back buffer to VRAM (call once per frame at VBlank start).
+void present_frame(void);
 void put_pixel(int x, int y, color_t color);
 void draw_rect(int x, int y, int w, int h, color_t color);
 void draw_char(int x, int y, char c, color_t color);
