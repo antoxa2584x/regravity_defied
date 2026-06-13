@@ -159,6 +159,8 @@ int main() {
     int finish_delta = 0;      // finish_time - previous best (signed, frames)
     int finish_has_delta = 0;  // was there a previous best to compare against
     int finish_x = 1000000;
+    int start_x = -1000000;    // pixel X of the start flag; timing begins when the front wheel passes it
+    int timer_started = 0;     // has the front wheel crossed the start flag this run
     int attempts = 0;          // crashes + 1 on the current track (the run count)
     int crash_flash = 0;       // frames of red hit-flash still owed after a crash
     int prev_state = -1;   // force a redraw on the first frame
@@ -267,9 +269,10 @@ int main() {
                 cam_x = get_pixel_coord(player_bike.x);
                 cam_y = get_pixel_coord(player_bike.y);
                 timer = 0;
+                timer_started = 0;  // starts once the front wheel passes the start flag
                 attempts = 1;       // this run; bumped on each crash-restart
                 crash_flash = 0;
-                get_track_flags(cur_track, NULL, NULL, &finish_x, NULL);
+                get_track_flags(cur_track, &start_x, NULL, &finish_x, NULL);
                 tm_accum = 0;  // don't dump menu idle time into the first tick
               }
             }
@@ -295,11 +298,17 @@ int main() {
                     init_bike(&player_bike, cur_track);
                     update_physics(&player_bike, cur_track, 0);
                     timer = 0;
+                    timer_started = 0;
                     attempts++;
                     crash_flash = 6;   // ~0.1s red hit-flash
                 }
-                timer++;
-                if (get_pixel_coord(player_bike.x) >= finish_x) {
+                // Timing is gated on the front wheel (node 1): it begins the
+                // frame the wheel crosses the start flag and ends when it
+                // crosses the finish flag.
+                int front_px = get_pixel_coord(player_bike.nodes[1].x);
+                if (!timer_started && front_px >= start_x) timer_started = 1;
+                if (timer_started) timer++;
+                if (front_px >= finish_x) {
                     state = STATE_FINISHED;
                     finish_time = timer;
                     // Record progress: mark complete, keep best time, and note
@@ -528,10 +537,13 @@ int main() {
 
                 draw_string_centered(150, "A: START   B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_GAME || state == STATE_TRACK_VIEW || state == STATE_FINISHED) {
-                // Draw HUD first — it sits at the top of the screen. If we drew
-                // it last and rendering overflowed VBlank, the scan line would
-                // have already passed those rows, causing every-other-frame
-                // flickering. Outlined so it stays legible over track lines.
+                draw_track(cur_track, cam_x, cam_y);
+                if (state == STATE_GAME || state == STATE_FINISHED) {
+                    draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
+                }
+
+                // HUD on top of the track so the timer stays readable. Outlined
+                // so it stays legible over track lines and the rider.
                 if (state == STATE_GAME) {
                     char time_buf[10];
                     format_time(timer, time_buf);
@@ -545,9 +557,16 @@ int main() {
                                          run_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
                 }
 
-                draw_track(cur_track, cam_x, cam_y);
-                if (state == STATE_GAME || state == STATE_FINISHED) {
-                    draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
+                // 10px green progress bar along the bottom: how far the front
+                // wheel has travelled from the start flag toward the finish.
+                if (state == STATE_GAME) {
+                    int span = finish_x - start_x;
+                    int front_px = get_pixel_coord(player_bike.nodes[1].x);
+                    int fill = span > 0 ? ((front_px - start_x) * SCREEN_WIDTH) / span : 0;
+                    if (fill < 0) fill = 0;
+                    if (fill > SCREEN_WIDTH) fill = SCREEN_WIDTH;
+                    draw_rect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 10, COLOR(3, 3, 3));
+                    if (fill > 0) draw_rect(0, SCREEN_HEIGHT - 5, fill, 10, COLOR(4, 28, 4));
                 }
 
                 // Crash hit-flash overlays the whole scene for a few frames.
