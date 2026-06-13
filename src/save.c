@@ -2,12 +2,19 @@
 
 // SRAM lives at 0x0E000000 and must be accessed one byte at a time.
 #define SRAM ((volatile uint8_t*)0x0E000000)
-#define SAVE_MAGIC 0x52474431u  // "RGD1"
+// "RGD2": bumped from "RGD1" when progress moved to a flat global track index.
+// Old saves use the previous (3x10) layout, so they no longer match and are
+// cleared on load, avoiding garbage being read past the old struct.
+#define SAVE_MAGIC 0x52474432u
 
 // Emulators/flashcarts enable 32 KB SRAM when this marker is present in the ROM.
 __attribute__((used)) static const char sram_sig[] = "SRAM_V113";
 
-SaveData g_save;
+// Progress is ~5 KB now (1024-track flat arrays) and is only touched in menus
+// and on finish — never in the per-frame hot path — so keep it out of the
+// scarce, fast IWRAM. .ewram is NOLOAD, but save_load() fills every byte from
+// SRAM at boot before any read, so nothing depends on zero-initialization.
+__attribute__((section(".ewram"))) SaveData g_save;
 
 static void sram_read(void* dst, int n) {
     uint8_t* d = dst;
@@ -36,35 +43,28 @@ void save_flush(void) {
 }
 
 void save_reset(void) {
-    for (int l = 0; l < NUM_LEAGUES; l++) {
-        for (int t = 0; t < MAX_TRACKS; t++) {
-            g_save.completed[l][t] = 0;
-            g_save.best[l][t] = 0;
-        }
+    for (int i = 0; i < MAX_TRACKS_TOTAL; i++) {
+        g_save.completed[i] = 0;
+        g_save.best[i] = 0;
     }
     save_flush();
 }
 
-int league_unlocked(int league, int prev_track_count) {
-    if (league <= 0) return 1;
-    for (int t = 0; t < prev_track_count; t++) {
-        if (!g_save.completed[league - 1][t]) return 0;
-    }
-    return 1;
+int save_completed(int gidx) {
+    if (gidx < 0 || gidx >= MAX_TRACKS_TOTAL) return 0;
+    return g_save.completed[gidx];
 }
 
-int track_unlocked(int league, int track, int prev_track_count) {
-    if (!league_unlocked(league, prev_track_count)) return 0;
-    if (track == 0) return 1;
-    return g_save.completed[league][track - 1];
+uint32_t save_best(int gidx) {
+    if (gidx < 0 || gidx >= MAX_TRACKS_TOTAL) return 0;
+    return g_save.best[gidx];
 }
 
-int record_finish(int league, int track, uint32_t time) {
-    if (league < 0 || league >= NUM_LEAGUES || track < 0 || track >= MAX_TRACKS)
-        return 0;
-    g_save.completed[league][track] = 1;
-    int is_best = (g_save.best[league][track] == 0 || time < g_save.best[league][track]);
-    if (is_best) g_save.best[league][track] = time;
+int record_finish(int gidx, uint32_t time) {
+    if (gidx < 0 || gidx >= MAX_TRACKS_TOTAL) return 0;
+    g_save.completed[gidx] = 1;
+    int is_best = (g_save.best[gidx] == 0 || time < g_save.best[gidx]);
+    if (is_best) g_save.best[gidx] = time;
     save_flush();
     return is_best;
 }

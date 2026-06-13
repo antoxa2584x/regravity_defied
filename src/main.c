@@ -198,11 +198,10 @@ int main() {
                 if (level_idx > 0) level_idx--;
             }
             if (keys_pressed & KEY_DOWN) {
-                if (level_idx < 2) level_idx++;
+                if (level_idx < NUM_LEAGUES - 1) level_idx++;
             }
             if (keys_pressed & (KEY_START | KEY_A)) {
-                int prev = level_idx > 0 ? level_track_count(mrg, level_idx - 1) : 0;
-                if (league_unlocked(level_idx, prev)) {
+                if (league_unlocked(mrg, level_idx)) {
                     state = STATE_MENU_TRACK;
                     track_idx = 0;
                 }
@@ -259,8 +258,7 @@ int main() {
                 if (track_idx < count - 1) track_idx++;
             }
             if (keys_pressed & (KEY_START | KEY_A)) {
-              int prev = level_idx > 0 ? level_track_count(mrg, level_idx - 1) : 0;
-              if (track_unlocked(level_idx, track_idx, prev)) {
+              if (track_unlocked(mrg, level_idx, track_idx)) {
                 state = STATE_GAME;
                 cur_track = get_track_data(mrg, level_idx, track_idx);
                 physics_set_league(level_idx);
@@ -307,13 +305,15 @@ int main() {
                     // Record progress: mark complete, keep best time, and note
                     // whether a new track or league just opened up.
                     int tc = level_track_count(mrg, level_idx);
-                    int was_done = g_save.completed[level_idx][track_idx];
+                    int gidx = global_track_index(mrg, level_idx, track_idx);
+                    int base = gidx - track_idx;            // first track of league
+                    int was_done = save_completed(gidx);
                     // Capture the prior best *before* record_finish overwrites it
                     // so the finish screen can show the delta.
-                    uint32_t prev_best = g_save.best[level_idx][track_idx];
+                    uint32_t prev_best = save_best(gidx);
                     finish_has_delta = prev_best != 0;
                     finish_delta = (int)finish_time - (int)prev_best;
-                    finish_new_best = record_finish(level_idx, track_idx, finish_time);
+                    finish_new_best = record_finish(gidx, finish_time);
                     finish_unlocked = 0;
                     if (!was_done) {
                         if (track_idx + 1 < tc) {
@@ -321,7 +321,7 @@ int main() {
                         } else if (level_idx + 1 < NUM_LEAGUES) {
                             int all = 1;                    // last track: league done?
                             for (int t = 0; t < tc; t++)
-                                if (!g_save.completed[level_idx][t]) { all = 0; break; }
+                                if (!save_completed(base + t)) { all = 0; break; }
                             finish_unlocked = all;          // next league now open
                         }
                     }
@@ -398,12 +398,12 @@ int main() {
                 int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
                 draw_string_scaled_outlined(title_x, 18, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
                 draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
-                for (int i = 0; i < 3; i++) {
-                    int prev = i > 0 ? level_track_count(mrg, i - 1) : 0;
-                    int unlocked = league_unlocked(i, prev);
+                for (int i = 0; i < NUM_LEAGUES; i++) {
+                    int unlocked = league_unlocked(mrg, i);
                     int tc = level_track_count(mrg, i);
+                    int base = global_track_index(mrg, i, 0);
                     int done = 0;
-                    for (int t = 0; t < tc; t++) done += g_save.completed[i][t];
+                    for (int t = 0; t < tc; t++) done += save_completed(base + t);
 
                     char buf[24];
                     char* e = str_cat(buf, league_names[i]);
@@ -463,7 +463,7 @@ int main() {
                 draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
                 draw_line(120, 22, 120, 140, COLOR(18, 18, 18));   // rail/pane divider
 
-                int prev = level_idx > 0 ? level_track_count(mrg, level_idx - 1) : 0;
+                int base = global_track_index(mrg, level_idx, 0);  // first track of league
                 const uint8_t* p = mrg;
                 for (int l = 0; l < level_idx; l++) {
                     uint32_t count = read_be32(p);
@@ -483,13 +483,13 @@ int main() {
 
                     // Window of 7 names around the cursor, left rail only.
                     if (t >= track_idx - 3 && t <= track_idx + 3) {
-                        int unlocked = track_unlocked(level_idx, t, prev);
+                        int unlocked = track_unlocked(mrg, level_idx, t);
                         color_t color = !unlocked ? COLOR(15, 15, 15)
                                       : (t == track_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
                         int y_pos = 32 + (t - (track_idx - 3)) * 14;
                         if (t == track_idx && blink) draw_string(6, y_pos, ">", color);
                         draw_string(16, y_pos, name, color);
-                        if (g_save.completed[level_idx][t])      // tick = cleared
+                        if (save_completed(base + t))            // tick = cleared
                             draw_string(16 + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
                     }
 
@@ -499,8 +499,8 @@ int main() {
 
                 // ---- Detail pane (centered on x = 180) ----
                 const int pcx = 180;
-                int sel_unlocked = track_unlocked(level_idx, track_idx, prev);
-                uint32_t sel_best = g_save.best[level_idx][track_idx];
+                int sel_unlocked = track_unlocked(mrg, level_idx, track_idx);
+                uint32_t sel_best = save_best(base + track_idx);
 
                 draw_string(pcx - str_px_width(sel_name) / 2, 30, sel_name, COLOR(0, 0, 0));
                 draw_string(pcx - str_px_width("BEST") / 2, 48, "BEST", COLOR(12, 12, 12));

@@ -5,7 +5,7 @@ OBJCOPY = $(CROSS)objcopy
 PYTHON ?= python3
 
 # Target name
-TARGET = regravity_defied
+TARGET = ReGravity_Defied
 
 # Build directories
 SRC_DIR = src

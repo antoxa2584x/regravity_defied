@@ -2,6 +2,7 @@
 #include "graphics.h"
 #include "gd_sprites.h"
 #include "physics.h"
+#include "save.h"
 
 static int s_flag_tick = 0;
 
@@ -27,6 +28,27 @@ int level_track_count(const uint8_t* mrg, int level_idx) {
         }
     }
     return (int)read_be32(p);
+}
+
+int global_track_index(const uint8_t* mrg, int league, int track) {
+    int idx = 0;
+    for (int l = 0; l < league; l++) idx += level_track_count(mrg, l);
+    return idx + track;
+}
+
+int league_unlocked(const uint8_t* mrg, int league) {
+    if (league <= 0) return 1;
+    int prev_count = level_track_count(mrg, league - 1);
+    int base = global_track_index(mrg, league - 1, 0);
+    for (int t = 0; t < prev_count; t++)
+        if (!save_completed(base + t)) return 0;
+    return 1;
+}
+
+int track_unlocked(const uint8_t* mrg, int league, int track) {
+    if (!league_unlocked(mrg, league)) return 0;
+    if (track == 0) return 1;
+    return save_completed(global_track_index(mrg, league, track) - 1);
 }
 
 const uint8_t* get_track_data(const uint8_t* mrg, int level_idx, int track_idx) {

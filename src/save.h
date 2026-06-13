@@ -3,14 +3,23 @@
 
 #include "gba.h"
 
+// Number of engine leagues. Fixed by the levels.mrg layout (it has no league
+// count header), but the tracks-per-league split is read from the file and may
+// be anything, so progress is stored by a flat global track index instead of a
+// fixed per-league grid.
 #define NUM_LEAGUES 3
-#define MAX_TRACKS  10
+// Upper bound on the total number of tracks across all leagues. Sized to cover
+// any track pack up to 1000 tracks. completed[] + best[] = 1024*5 = 5120 bytes,
+// well within the 32 KB SRAM. Bump SAVE_MAGIC in save.c if this changes.
+#define MAX_TRACKS_TOTAL 1024
 
-// Persistent progress, mirrored to battery-backed SRAM.
+// Persistent progress, mirrored to battery-backed SRAM. Indexed by global track
+// index (sum of the track counts of all preceding leagues, plus the in-league
+// track index) — see global_track_index() in level.c.
 typedef struct {
-    uint32_t magic;                              // validity marker
-    uint8_t  completed[NUM_LEAGUES][MAX_TRACKS]; // 1 once a track is finished
-    uint32_t best[NUM_LEAGUES][MAX_TRACKS];      // best time in frames (0 = none)
+    uint32_t magic;                          // validity marker
+    uint8_t  completed[MAX_TRACKS_TOTAL];    // 1 once a track is finished
+    uint32_t best[MAX_TRACKS_TOTAL];         // best time in frames (0 = none)
 } SaveData;
 
 extern SaveData g_save;
@@ -22,12 +31,12 @@ void save_flush(void);
 // Erase all progress and best times (then persist).
 void save_reset(void);
 
-// A league is unlocked if it is the first or the previous league is fully done.
-int league_unlocked(int league, int prev_track_count);
-// A track is unlocked if its league is and the previous track is completed.
-int track_unlocked(int league, int track, int prev_track_count);
+// Bounds-checked accessors keyed by global track index. Out-of-range indices
+// read as "not completed" / "no best time".
+int      save_completed(int gidx);
+uint32_t save_best(int gidx);
 // Record a finish: mark completed, keep the better time, persist. Returns 1 if
 // this run set a new best time.
-int record_finish(int league, int track, uint32_t time);
+int record_finish(int gidx, uint32_t time);
 
 #endif // SAVE_H
