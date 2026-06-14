@@ -24,8 +24,11 @@ enum State {
 enum TiltMode { TILT_DPAD, TILT_SHOULDERS };
 static int tilt_mode = TILT_DPAD;
 
+// Sound on/off, toggled on the settings screen (runtime-only, like tilt_mode).
+static int sound_on = 1;
+
 // Settings screen cursor options.
-enum { SET_TILT, SET_RESET, SET_ABOUT, SET_COUNT };
+enum { SET_TILT, SET_SOUND, SET_RESET, SET_ABOUT, SET_COUNT };
 static int settings_cursor = SET_TILT;
 
 Bike player_bike;
@@ -220,6 +223,10 @@ int main() {
                 if (keys_pressed & (KEY_LEFT | KEY_RIGHT | KEY_A)) {
                     tilt_mode = (tilt_mode == TILT_DPAD) ? TILT_SHOULDERS : TILT_DPAD;
                 }
+            } else if (settings_cursor == SET_SOUND) {
+                if (keys_pressed & (KEY_LEFT | KEY_RIGHT | KEY_A)) {
+                    sound_on = !sound_on;
+                }
             } else if (settings_cursor == SET_RESET) {
                 if (keys_pressed & KEY_A) state = STATE_CONFIRM_RESET;
             } else if (settings_cursor == SET_ABOUT) {
@@ -294,7 +301,7 @@ int main() {
             for (int s = 0; s < steps && state == STATE_GAME; s++) {
                 update_physics(&player_bike, cur_track, pk);
                 if (player_bike.crash) {
-                    sound_play_crash();
+                    if (sound_on) sound_play_crash();
                     init_bike(&player_bike, cur_track);
                     update_physics(&player_bike, cur_track, 0);
                     timer = 0;
@@ -441,16 +448,22 @@ int main() {
                 char* e = str_cat(tbuf, "TILT: ");
                 str_cat(e, tilt_mode == TILT_DPAD ? "D-PAD" : "L/R SHOULDERS");
                 color_t tcol = (settings_cursor == SET_TILT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(60, tbuf, tcol, settings_cursor == SET_TILT, blink);
+                draw_menu_row(54, tbuf, tcol, settings_cursor == SET_TILT, blink);
+
+                char sbuf[16];
+                char* se = str_cat(sbuf, "SOUND: ");
+                str_cat(se, sound_on ? "ON" : "OFF");
+                color_t scol = (settings_cursor == SET_SOUND) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
+                draw_menu_row(72, sbuf, scol, settings_cursor == SET_SOUND, blink);
 
                 color_t rcol = (settings_cursor == SET_RESET) ? COLOR(31, 0, 0) : COLOR(15, 8, 8);
-                draw_menu_row(80, "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
+                draw_menu_row(90, "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
 
                 color_t acol = (settings_cursor == SET_ABOUT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(100, "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
+                draw_menu_row(108, "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
 
-                draw_string_centered(125, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
-                draw_string_centered(140, "B: BACK", COLOR(10, 10, 10));
+                draw_string_centered(130, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
+                draw_string_centered(142, "B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_ABOUT) {
                 int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
                 draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
