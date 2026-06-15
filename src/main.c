@@ -407,6 +407,13 @@ int main() {
                 int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
                 draw_string_scaled_outlined(title_x, 18, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
                 draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                // Mod label ("<mrg name> MOD") under the title, from the embedded levels file.
+                if (MOD_NAME[0]) {
+                    char mbuf[24];
+                    char* me = str_cat(mbuf, MOD_NAME);
+                    str_cat(me, " MOD");
+                    draw_string_centered_outlined(38, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
+                }
                 for (int i = 0; i < NUM_LEAGUES; i++) {
                     int unlocked = league_unlocked(mrg, i);
                     int tc = level_track_count(mrg, i);

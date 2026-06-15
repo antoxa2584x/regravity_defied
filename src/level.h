@@ -3,6 +3,12 @@
 
 #include "gba.h"
 
+// Name of the embedded levels/*.mrg mod, baked in by the Makefile per ROM.
+// Shown on the league screen under the title. Defaults empty for standalone builds.
+#ifndef MOD_NAME
+#define MOD_NAME ""
+#endif
+
 // Symbols from levels.o
 extern const uint8_t _binary_levels_mrg_start[];
 extern const uint8_t _binary_levels_mrg_end[];

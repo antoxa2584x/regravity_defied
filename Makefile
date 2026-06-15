@@ -10,6 +10,12 @@ TARGET = ReGravity_Defied
 # Build directories
 SRC_DIR = src
 BUILD_DIR = build
+LEVELS_DIR = levels
+
+# Each levels/*.mrg produces its own ROM: $(TARGET)_<name>.gba
+LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
+MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
+ROMS = $(foreach m,$(MODS),$(TARGET)_$(m).gba)
 
 # Compiler flags
 CFLAGS = -mthumb -mthumb-interwork -mlittle-endian -mcpu=arm7tdmi \
@@ -22,12 +28,9 @@ LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T gba.ld
 # Source files
 SRCS_C = $(wildcard $(SRC_DIR)/*.c)
 SRCS_S = $(wildcard $(SRC_DIR)/*.s)
-OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS_C)) \
-       $(patsubst $(SRC_DIR)/%.s, $(BUILD_DIR)/%.o, $(SRCS_S)) \
-       $(BUILD_DIR)/levels.o
 
-# Default target
-all: $(TARGET).gba
+# Default target: build one ROM per levels/*.mrg
+all: $(ROMS)
 
 # Regenerate the committed asset headers from assets/ (needs Pillow + miniaudio).
 .PHONY: assets
@@ -35,34 +38,45 @@ assets:
 	$(PYTHON) tools/convert_assets.py
 	$(PYTHON) tools/convert_sound.py
 
-# Create build directory
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+# Per-mod build rules. For each levels/<mod>.mrg we compile the sources into a
+# dedicated build/<mod>/ directory (so MOD_NAME differs per ROM), embed that
+# mod's level data, and link a separate $(TARGET)_<mod>.gba ROM.
+define MOD_template
+$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
+            $$(patsubst $$(SRC_DIR)/%.s, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_S)) \
+            $$(BUILD_DIR)/$(1)/levels.o
 
-# Compile C source files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# Compile C sources with this mod's name baked in for the on-screen label.
+$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
 
-# Assemble assembly files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# Assemble assembly sources.
+$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.s
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -c $$< -o $$@
 
-# Embed levels.mrg
-$(BUILD_DIR)/levels.o: levels.mrg | $(BUILD_DIR)
-	$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
+# Embed this mod's level data. Copy to a fixed "levels.mrg" name and run objcopy
+# from that directory so the generated symbol is always _binary_levels_mrg_start
+# regardless of the source mod name.
+$$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
+	@mkdir -p $$(dir $$@)
+	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
+	cd $$(BUILD_DIR)/$(1) && $$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
 
-# Link object files to ELF file
-$(TARGET).elf: $(OBJS)
-	$(CC) $(OBJS) $(LDFLAGS) -o $@
+$(TARGET)_$(1).elf: $$($(1)_OBJS)
+	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) -o $$@
 
-# Convert ELF file to GBA ROM
-$(TARGET).gba: $(TARGET).elf
-	$(OBJCOPY) -v -O binary $< $@
-	$(PYTHON) gbafix.py $@
+$(TARGET)_$(1).gba: $(TARGET)_$(1).elf
+	$$(OBJCOPY) -v -O binary $$< $$@
+	$$(PYTHON) gbafix.py $$@
+endef
+
+$(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
 
 # Clean target
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET).elf $(TARGET).gba
+	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m).elf $(TARGET)_$(m).gba)
 
 debug: CFLAGS += -DDEBUG
 debug: all
