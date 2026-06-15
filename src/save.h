@@ -21,6 +21,7 @@ typedef struct {
     uint8_t  completed[MAX_TRACKS_TOTAL];    // 1 once a track is finished
     uint32_t best[MAX_TRACKS_TOTAL];         // best time in frames (0 = none)
     uint16_t last_track[NUM_LEAGUES];        // last track opened per league
+    uint8_t  sound_on;                       // 1 = SFX enabled (default), 0 = muted
 } SaveData;
 
 extern SaveData g_save;
@@ -47,5 +48,9 @@ int record_finish(int gidx, uint32_t time);
 // Out-of-range leagues read as track 0. Setter persists immediately.
 int  save_last_track(int league);
 void save_set_last_track(int league, int track);
+
+// Sound on/off toggle from the settings screen. Setter persists immediately.
+int  save_sound_on(void);
+void save_set_sound_on(int on);
 
 #endif // SAVE_H

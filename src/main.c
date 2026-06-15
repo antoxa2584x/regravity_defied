@@ -24,8 +24,8 @@ enum State {
 enum TiltMode { TILT_DPAD, TILT_SHOULDERS };
 static int tilt_mode = TILT_DPAD;
 
-// Sound on/off, toggled on the settings screen (runtime-only, like tilt_mode).
-static int sound_on = 1;
+// Sound on/off lives in SRAM (save_sound_on / save_set_sound_on), so the
+// setting survives a power-off — unlike tilt_mode, which stays runtime-only.
 
 // Settings screen cursor options.
 enum { SET_TILT, SET_SOUND, SET_RESET, SET_ABOUT, SET_COUNT };
@@ -256,7 +256,7 @@ int main() {
                 }
             } else if (settings_cursor == SET_SOUND) {
                 if (keys_pressed & (KEY_LEFT | KEY_RIGHT | KEY_A)) {
-                    sound_on = !sound_on;
+                    save_set_sound_on(!save_sound_on());
                 }
             } else if (settings_cursor == SET_RESET) {
                 if (keys_pressed & KEY_A) state = STATE_CONFIRM_RESET;
@@ -358,7 +358,7 @@ int main() {
             for (int s = 0; s < steps && state == STATE_GAME; s++) {
                 update_physics(&player_bike, cur_track, pk);
                 if (player_bike.crash) {
-                    if (sound_on) sound_play_crash();
+                    if (save_sound_on()) sound_play_crash();
                     init_bike(&player_bike, cur_track);
                     update_physics(&player_bike, cur_track, 0);
                     timer = 0;
@@ -518,7 +518,7 @@ int main() {
 
                 char sbuf[16];
                 char* se = str_cat(sbuf, "SOUND: ");
-                str_cat(se, sound_on ? "ON" : "OFF");
+                str_cat(se, save_sound_on() ? "ON" : "OFF");
                 color_t scol = (settings_cursor == SET_SOUND) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
                 draw_menu_row(72, sbuf, scol, settings_cursor == SET_SOUND, blink);
 
