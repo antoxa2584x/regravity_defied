@@ -2,12 +2,11 @@
 /.idea/
 /ref/
 /build/
-/levels.mrg
 /.ai/
 /regravity_defied.elf
 /regravity_defied.sav
-/levels/
 # Per-mod build outputs (one ROM per levels/*.mrg)
 /ReGravity_Defied_*.gba
 /ReGravity_Defied_*.elf
 /ReGravity_Defied_*.sav
+/levels/1000.mrg

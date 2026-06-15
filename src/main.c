@@ -108,16 +108,18 @@ static void format_delta(int frames, char* buf) {
 // in a faint grey over the white cleared screen (no real alpha in MODE3, so a
 // light grey reads as a translucent black), and each column is displaced by a
 // travelling sine wave to suggest waving cloth. Drawn behind the menu text, so
-// the menu stays readable. `t` is a frame counter that drives the animation.
+// the menu stays readable. `phase` is a wall-clock-derived counter (one step per
+// ~1/20 s) so the wave travels at a constant real-time speed regardless of how
+// many frames the menu actually renders — like the blink, it never slows down.
 #define CHK_CELL 24
-static void draw_checker_bg(int t) {
+static void draw_checker_bg(int phase) {
     // One period of a sine, ~6px amplitude (no libm on the GBA).
     static const signed char wave[16] =
         { 0, 3, 5, 6, 6, 6, 5, 3, 0, -3, -5, -6, -6, -6, -5, -3 };
     const color_t c = COLOR(58, 58, 58);   // faint grey ≈ translucent checker
     for (int col = -1; col * CHK_CELL < SCREEN_WIDTH; col++) {
         int x = col * CHK_CELL;
-        int yoff = wave[(col * 2 + t / 3) & 15];   // neighbouring columns ripple
+        int yoff = wave[(col * 2 + phase) & 15];   // neighbouring columns ripple
         for (int row = -1; row * CHK_CELL < SCREEN_HEIGHT + CHK_CELL; row++) {
             if (((col + row) & 1) == 0) continue;  // checkerboard: alternate cells
             draw_rect(x, row * CHK_CELL + yoff, CHK_CELL, CHK_CELL, c);
@@ -408,7 +410,9 @@ int main() {
                 if (blink) draw_string(87, 120, "PRESS START", COLOR(0, 0, 0));
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
-                draw_checker_bg(frame);   // animated semi-transparent checkered flag
+                // Wall-clock phase (16384 Hz / 819 ≈ 20 steps/s) so the flag waves
+                // at the same speed whether the menu renders at 60 or fewer fps.
+                draw_checker_bg(clock_ticks / 1638);   // animated semi-transparent checkered flag
                 // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
                 // White 1px outline keeps it readable over the checkered backdrop.
                 int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
