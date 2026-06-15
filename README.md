@@ -24,7 +24,7 @@ Written in C for the bare-metal `arm-none-eabi` toolchain — no SDK, no engine,
 
 | | |
 |---|---|
-| 🏁 **Authentic physics** | Verlet-integrated bike dynamics ported from the original — 3 engine leagues (**100cc · 175cc · 220cc**), 10 tracks each. |
+| 🏁 **Authentic physics** | Verlet-integrated bike dynamics ported from the original — 3 engine leagues (**100cc · 175cc · 220cc**). |
 | 🧍 **Articulated rider** | A jointed sprite (legs, torso, arm, helmet) that leans with the bike. |
 | 🎞️ **Smooth rendering** | Double-buffered Mode 3 renderer with a fixed **60 Hz** simulation fully decoupled from the frame rate. |
 | 🔓 **Progression** | The first track is open by default; finishing a track unlocks the next, and clearing a league unlocks the next league. |
