@@ -20,6 +20,7 @@ typedef struct {
     uint32_t magic;                          // validity marker
     uint8_t  completed[MAX_TRACKS_TOTAL];    // 1 once a track is finished
     uint32_t best[MAX_TRACKS_TOTAL];         // best time in frames (0 = none)
+    uint16_t last_track[NUM_LEAGUES];        // last track opened per league
 } SaveData;
 
 extern SaveData g_save;
@@ -38,5 +39,10 @@ uint32_t save_best(int gidx);
 // Record a finish: mark completed, keep the better time, persist. Returns 1 if
 // this run set a new best time.
 int record_finish(int gidx, uint32_t time);
+
+// Last track opened in a league (cursor position the level screen restores to).
+// Out-of-range leagues read as track 0. Setter persists immediately.
+int  save_last_track(int league);
+void save_set_last_track(int league, int track);
 
 #endif // SAVE_H

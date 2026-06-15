@@ -2,10 +2,10 @@
 
 // SRAM lives at 0x0E000000 and must be accessed one byte at a time.
 #define SRAM ((volatile uint8_t*)0x0E000000)
-// "RGD2": bumped from "RGD1" when progress moved to a flat global track index.
-// Old saves use the previous (3x10) layout, so they no longer match and are
-// cleared on load, avoiding garbage being read past the old struct.
-#define SAVE_MAGIC 0x52474432u
+// "RGD3": bumped from "RGD2" when last_track[] was added to SaveData. Old saves
+// have a smaller struct, so they no longer match and are cleared on load,
+// avoiding garbage being read past the old struct.
+#define SAVE_MAGIC 0x52474433u
 
 // Emulators/flashcarts enable 32 KB SRAM when this marker is present in the ROM.
 __attribute__((used)) static const char sram_sig[] = "SRAM_V113";
@@ -47,6 +47,7 @@ void save_reset(void) {
         g_save.completed[i] = 0;
         g_save.best[i] = 0;
     }
+    for (int i = 0; i < NUM_LEAGUES; i++) g_save.last_track[i] = 0;
     save_flush();
 }
 
@@ -67,4 +68,17 @@ int record_finish(int gidx, uint32_t time) {
     if (is_best) g_save.best[gidx] = time;
     save_flush();
     return is_best;
+}
+
+int save_last_track(int league) {
+    if (league < 0 || league >= NUM_LEAGUES) return 0;
+    return g_save.last_track[league];
+}
+
+void save_set_last_track(int league, int track) {
+    if (league < 0 || league >= NUM_LEAGUES) return;
+    if (track < 0) track = 0;
+    if (g_save.last_track[league] == track) return;  // nothing changed; skip SRAM write
+    g_save.last_track[league] = (uint16_t)track;
+    save_flush();
 }

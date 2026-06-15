@@ -157,6 +157,8 @@ int main() {
     const uint8_t* cur_track = NULL; // cached; set when entering STATE_GAME
     
     uint16_t prev_keys = 0;
+    uint16_t held_dpad = 0;   // d-pad bits held last frame, for menu auto-repeat
+    int hold_frames = 0;      // frames the current d-pad direction has been held
     int timer = 0;
     int finish_time = 0;
     int finish_new_best = 0;   // did the last finish set a record
@@ -180,6 +182,27 @@ int main() {
         uint16_t keys_pressed = keys & ~prev_keys;
         prev_keys = keys;
 
+        // D-pad auto-repeat for menu navigation: a freshly pressed direction
+        // fires once, then holding it repeats after a short delay. Lets the
+        // league/level lists scroll quickly when a direction is held instead of
+        // stepping one row per press. Repeats fire only while a single, steady
+        // direction is held; changing or releasing the d-pad resets the timer.
+        #define MENU_REPEAT_DELAY 14  // frames held before auto-repeat begins
+        #define MENU_REPEAT_RATE   3  // frames between repeats while held
+        uint16_t dpad = keys & (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT);
+        uint16_t repeat_fire = 0;
+        if (dpad != held_dpad) {
+            held_dpad = dpad;
+            hold_frames = 0;
+        } else if (dpad) {
+            hold_frames++;
+            if (hold_frames >= MENU_REPEAT_DELAY &&
+                (hold_frames - MENU_REPEAT_DELAY) % MENU_REPEAT_RATE == 0) {
+                repeat_fire = dpad;
+            }
+        }
+        uint16_t keys_repeat = keys_pressed | repeat_fire;
+
         // Fixed-timestep clock: how many 60 Hz sim steps are owed for the real
         // time elapsed since last loop. At 30 fps render this is 2 per frame,
         // keeping the simulation at full speed. Clamp to avoid a catch-up spiral
@@ -201,16 +224,20 @@ int main() {
                 state = STATE_MENU_HARDNESS;
             }
         } else if (state == STATE_MENU_HARDNESS) {
-            if (keys_pressed & KEY_UP) {
+            if (keys_repeat & KEY_UP) {
                 if (level_idx > 0) level_idx--;
             }
-            if (keys_pressed & KEY_DOWN) {
+            if (keys_repeat & KEY_DOWN) {
                 if (level_idx < NUM_LEAGUES - 1) level_idx++;
             }
             if (keys_pressed & (KEY_START | KEY_A)) {
                 if (league_unlocked(mrg, level_idx)) {
                     state = STATE_MENU_TRACK;
-                    track_idx = 0;
+                    // Restore the saved cursor, clamped in case this track pack
+                    // has fewer tracks in the league than the one that saved it.
+                    int n = level_track_count(mrg, level_idx);
+                    track_idx = save_last_track(level_idx);
+                    if (track_idx >= n) track_idx = n > 0 ? n - 1 : 0;
                 }
             }
             if (keys_pressed & KEY_SELECT) {
@@ -250,10 +277,10 @@ int main() {
                 state = STATE_SETTINGS;
             }
         } else if (state == STATE_MENU_TRACK) {
-            if (keys_pressed & KEY_UP) {
+            if (keys_repeat & KEY_UP) {
                 if (track_idx > 0) track_idx--;
             }
-            if (keys_pressed & KEY_DOWN) {
+            if (keys_repeat & KEY_DOWN) {
                 int count = 0;
                 const uint8_t* p = mrg;
                 for (int l = 0; l <= level_idx; l++) {
@@ -271,6 +298,7 @@ int main() {
             if (keys_pressed & (KEY_START | KEY_A)) {
               if (track_unlocked(mrg, level_idx, track_idx)) {
                 state = STATE_GAME;
+                save_set_last_track(level_idx, track_idx);  // persist for next level-screen visit
                 cur_track = get_track_data(mrg, level_idx, track_idx);
                 physics_set_league(level_idx);
                 init_bike(&player_bike, cur_track);
