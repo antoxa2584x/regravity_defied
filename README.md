@@ -4,7 +4,7 @@
 
 ### An open-source Game Boy Advance port of the classic J2ME motorcycle-trials game **Gravity Defied**
 
-Hand-written in C for the bare-metal `arm-none-eabi` toolchain — no SDK, no engine, just the hardware.
+Written in C for the bare-metal `arm-none-eabi` toolchain — no SDK, no engine, just the hardware.
 
 <br/>
 
