@@ -51,6 +51,11 @@ void save_reset(void) {
     save_flush();
 }
 
+void save_unlock_all(void) {
+    for (int i = 0; i < MAX_TRACKS_TOTAL; i++) g_save.completed[i] = 1;
+    save_flush();
+}
+
 int save_completed(int gidx) {
     if (gidx < 0 || gidx >= MAX_TRACKS_TOTAL) return 0;
     return g_save.completed[gidx];

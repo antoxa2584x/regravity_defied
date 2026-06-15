@@ -31,6 +31,9 @@ void save_load(void);
 void save_flush(void);
 // Erase all progress and best times (then persist).
 void save_reset(void);
+// Cheat: mark every track completed so all leagues/tracks unlock (then persist).
+// Best times are left untouched.
+void save_unlock_all(void);
 
 // Bounds-checked accessors keyed by global track index. Out-of-range indices
 // read as "not completed" / "no best time".

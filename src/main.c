@@ -159,6 +159,8 @@ int main() {
     uint16_t prev_keys = 0;
     uint16_t held_dpad = 0;   // d-pad bits held last frame, for menu auto-repeat
     int hold_frames = 0;      // frames the current d-pad direction has been held
+    int cheat_idx = 0;        // progress through the About-screen unlock code
+    int cheat_done = 0;       // show the "ALL UNLOCKED" banner after the code lands
     int timer = 0;
     int finish_time = 0;
     int finish_new_best = 0;   // did the last finish set a record
@@ -259,14 +261,39 @@ int main() {
             } else if (settings_cursor == SET_RESET) {
                 if (keys_pressed & KEY_A) state = STATE_CONFIRM_RESET;
             } else if (settings_cursor == SET_ABOUT) {
-                if (keys_pressed & KEY_A) state = STATE_ABOUT;
+                if (keys_pressed & KEY_A) {
+                    state = STATE_ABOUT;
+                    cheat_idx = 0;   // fresh code entry each visit
+                    cheat_done = 0;
+                }
             }
             if (keys_pressed & (KEY_B | KEY_SELECT)) {
                 state = STATE_MENU_HARDNESS;
             }
         } else if (state == STATE_ABOUT) {
-            if (keys_pressed & (KEY_B | KEY_SELECT | KEY_A | KEY_START)) {
-                state = STATE_SETTINGS;
+            // Konami-style unlock code. Each correct key advances the sequence;
+            // a wrong d-pad key re-syncs from the start, and B/SELECT/A/START
+            // exit to settings UNLESS they're the next expected key (the code
+            // ends in B, A, START, so those must advance rather than back out).
+            static const uint16_t code[] = {
+                KEY_UP, KEY_UP, KEY_DOWN, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
+                KEY_LEFT, KEY_RIGHT, KEY_B, KEY_A, KEY_START
+            };
+            const int code_len = (int)(sizeof(code) / sizeof(code[0]));
+            if (keys_pressed) {
+                if (keys_pressed & code[cheat_idx]) {
+                    if (++cheat_idx >= code_len) {
+                        save_unlock_all();
+                        cheat_done = 1;
+                        cheat_idx = 0;
+                    }
+                } else if (keys_pressed & (KEY_B | KEY_SELECT | KEY_A | KEY_START)) {
+                    cheat_idx = 0;
+                    state = STATE_SETTINGS;
+                } else {
+                    // Wrong d-pad key: restart, allowing it to be a fresh first key.
+                    cheat_idx = (keys_pressed & code[0]) ? 1 : 0;
+                }
             }
         } else if (state == STATE_CONFIRM_RESET) {
             // Default to NO: only A confirms; anything else cancels.
@@ -511,6 +538,8 @@ int main() {
                 draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
                 draw_string_centered(86, "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
                 draw_string_centered(98, "/REGRAVITY_DEFIED_GBA", COLOR(0, 22, 0));
+                if (cheat_done)
+                    draw_string_centered(120, "ALL LEVELS UNLOCKED!", COLOR(0, 31, 0));
                 draw_string_centered(140, "B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_CONFIRM_RESET) {
                 draw_rect(40, 55, 160, 50, COLOR(31, 31, 31));
