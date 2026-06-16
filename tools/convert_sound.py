@@ -6,12 +6,24 @@ by a hardware timer. We decode the MP3 to mono at SAMPLE_RATE, downcovert to
 signed 8-bit, and pad the length to a multiple of 16 (the FIFO drains 16 bytes
 per DMA request) so playback ends on a clean boundary.
 
+End-of-clip is detected once per frame and playback is then coasted one more
+frame so the DAC is driven to zero by real silence before the DMA/timer stop
+(see src/sound.c). The DMA keeps streaming the whole time, so we append
+GUARD_SAMPLES of trailing silence for it to read — up to two frames' worth past
+the real audio — instead of running off the end into whatever ROM follows (which
+would be clocked to the DAC as an audible pop). WILHELM_LEN stays the real audio
+length so playback timing is unchanged; only the backing array is longer.
+
 Run from the repo root:  python3 tools/convert_sound.py
 """
 import os
 import miniaudio
 
 SAMPLE_RATE = 16384  # Hz; timer reload = 65536 - (16777216 / SAMPLE_RATE) = 64512
+# ~125ms of trailing silence: covers the up-to-two frames (detection latency +
+# one coast frame) the DMA reads past the audio, with margin even if the game
+# briefly drops well below 60fps. Must stay a multiple of 16.
+GUARD_SAMPLES = 2048
 ASSETS = os.path.join(os.path.dirname(__file__), "..", "assets", "sound")
 OUT = os.path.join(os.path.dirname(__file__), "..", "src", "gd_sound.h")
 
@@ -40,8 +52,9 @@ def main():
         f.write(f"#define SOUND_SAMPLE_RATE {SAMPLE_RATE}\n\n")
 
         pcm = decode_pcm8(os.path.join(ASSETS, "wilhelmscream.mp3"))
+        # WILHELM_LEN drives end-of-clip timing; keep it the real audio length.
         f.write(f"#define WILHELM_LEN {len(pcm)}\n")
-        emit_array(f, "wilhelm_pcm", pcm)
+        emit_array(f, "wilhelm_pcm", pcm + [0] * GUARD_SAMPLES)
 
         f.write("#endif // GD_SOUND_H\n")
     print(f"wrote {os.path.relpath(OUT)}  ({len(pcm)} samples, "

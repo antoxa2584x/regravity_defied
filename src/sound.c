@@ -11,9 +11,6 @@ static int playing = 0;
 static int draining = 0;      // clocking silence through the DAC before stopping
 static uint16_t play_start;   // Timer 0 reading when playback began
 
-// Direct FIFO A write port (each 32-bit word = 4 signed 8-bit samples).
-#define FIFO_A (*(volatile uint32_t*)REG_FIFO_A)
-
 void sound_init(void) {
     REG_SOUNDBIAS  = 0x0200;   // default output bias
     REG_SOUNDCNT_X = 0x0080;   // master sound enable (must precede CNT_H writes)
@@ -42,8 +39,9 @@ void sound_play_crash(void) {
 
 void sound_tick(void) {
     if (draining) {
-        // The silence written last frame has been clocked out, so the DAC now
-        // sits at zero. Safe to fully stop without a pop.
+        // The DMA has streamed a frame of the trailing-silence guard, so the
+        // DAC has been fed zeros and now sits firmly at zero. Safe to fully
+        // stop without a pop.
         REG_DMA1CNT_H = 0;
         REG_TM1CNT_H  = 0;
         draining = 0;
@@ -51,15 +49,12 @@ void sound_tick(void) {
     }
     if (!playing) return;
     if ((uint16_t)(REG_TM0CNT_L - play_start) >= PLAY_TICKS) {
-        // End of clip. If we just stopped Timer 1 here, the DAC would hold the
-        // last (non-zero) sample as a DC offset — an audible pop. Instead stop
-        // the DMA, flush the FIFO, and push a few zero samples so the next
-        // values clocked to the DAC are silence. Timer 1 keeps running this
-        // frame to consume them; the hard stop happens next tick (draining).
-        REG_DMA1CNT_H  = 0;          // stop feeding the FIFO from the sample buffer
-        REG_SOUNDCNT_H |= 0x0800;    // reset FIFO A (auto-clears)
-        FIFO_A = 0;                  // 8 samples of silence — plenty to span one
-        FIFO_A = 0;                  // frame at 16 kHz before the next tick stops
+        // End of the real audio. Don't stop or touch the DMA: it now streams
+        // straight on into the trailing-silence guard at the end of the buffer
+        // (see gd_sound.h), so the DAC is driven to zero by genuine silence
+        // rather than freezing on the last sample (a DC pop) or underrunning
+        // the FIFO (a stutter). Timer 1 keeps clocking those zeros for one more
+        // frame; the hard stop happens next tick, still well inside the guard.
         playing = 0;
         draining = 1;
     }
