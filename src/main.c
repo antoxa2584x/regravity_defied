@@ -33,6 +33,15 @@ static int settings_cursor = SET_TILT;
 
 Bike player_bike;
 
+// Decorative bike that drives across the splash screen (see STATE_SPLASH). It is
+// never simulated — init_bike gives it a fixed neutral pose and we just slide it
+// across by feeding draw_bike a moving camera offset.
+static Bike deco_bike;
+static int  deco_x;     // screen x of the bike's frame node, in pixels
+static int  deco_lane;  // screen y baseline for the current pass
+static int  deco_step;  // horizontal speed, px per frame
+static uint32_t deco_rng = 0x2545F491u;
+
 // Pixel width of a string in the 5x7 font (6px advance per glyph).
 static int str_px_width(const char* s) {
     int n = 0;
@@ -127,6 +136,30 @@ static void draw_checker_bg(int phase) {
     }
 }
 
+// Gentle vertical bob (±6px) for the floating splash title/mod text. Indexed off
+// the wall clock (one full cycle ≈ 2s) so the float speed is steady regardless
+// of frame rate.
+static int float_offset(uint32_t clock_ticks) {
+    static const signed char wave[16] =
+        { 0, 3, 5, 6, 6, 6, 5, 3, 0, -3, -5, -6, -6, -6, -5, -3 };
+    return wave[(clock_ticks / 2048) & 15];
+}
+
+// Tiny LCG -> integer in [lo, hi]. Only used to give the splash bike a varied
+// lane and speed on each pass, so statistical quality is irrelevant.
+static int deco_rand(int lo, int hi) {
+    deco_rng = deco_rng * 1103515245u + 12345u;
+    return lo + (int)((deco_rng >> 16) % (uint32_t)(hi - lo + 1));
+}
+
+// (Re)launch the splash bike from just off the left edge with a fresh random
+// lane and speed. Always travels left->right, the direction the bike faces.
+static void deco_bike_launch(void) {
+    deco_x    = -40;
+    deco_lane = deco_rand(108, 134);
+    deco_step = deco_rand(1, 3);
+}
+
 int main() {
     // Enable ROM prefetch buffer: sequential ROM reads drop from 4 to 1 wait state.
     // Bit 14 = prefetch enable; rest are sensible wait state values.
@@ -148,6 +181,12 @@ int main() {
     debug_init();
 
     const uint8_t* mrg = _binary_levels_mrg_start;
+
+    // Pose the decorative splash bike once on the first track; it is only ever
+    // translated after this, never simulated.
+    physics_set_league(0);
+    init_bike(&deco_bike, get_track_data(mrg, 0, 0));
+    deco_bike_launch();
 
     int level_idx = 0;
     int track_idx = 0;
@@ -222,6 +261,10 @@ int main() {
             // Auto-advance to the splash after ~5 seconds (60 fps).
             if (frame >= 300) state = STATE_SPLASH;
         } else if (state == STATE_SPLASH) {
+            // Drive the decorative bike across; relaunch with a new random lane
+            // and speed once it leaves the right edge.
+            deco_x += deco_step;
+            if (deco_x > SCREEN_WIDTH + 40) deco_bike_launch();
             if (keys_pressed & (KEY_START | KEY_A | KEY_B)) {
                 state = STATE_MENU_HARDNESS;
             }
@@ -445,6 +488,7 @@ int main() {
         int do_fade = transition && prev_state >= 0 && state != STATE_FINISHED;
         int redraw = (state == STATE_GAME)
                    || (state == STATE_MENU_HARDNESS)   // animated checker backdrop
+                   || (state == STATE_SPLASH)          // animated checker + floating title
                    || transition
                    || keys_pressed
                    || (blinking_state && blink != prev_blink);
@@ -461,8 +505,29 @@ int main() {
             if (state == STATE_INTRO) {
                 draw_string_centered(76, "Remake by rgaming.com.ua", COLOR(0, 31, 0));
             } else if (state == STATE_SPLASH) {
-                draw_sprite((SCREEN_WIDTH - SPLASH_IMG_W) / 2, 50, splash_img, SPLASH_IMG_W, SPLASH_IMG_H);
-                if (blink) draw_string(87, 120, "PRESS START", COLOR(0, 0, 0));
+                // Animated checkered-flag backdrop, matching the league select.
+                draw_checker_bg(clock_ticks / 1638);
+                // Decorative bike driving across, slightly bobbing. draw_bike
+                // treats (ox, oy) as a camera offset, so we offset by the frame
+                // node's own pixel coords to land it at (deco_x, lane + bob).
+                int bx0 = get_pixel_coord(deco_bike.nodes[0].x);
+                int by0 = get_pixel_coord(deco_bike.nodes[0].y);
+                int deco_y = deco_lane + float_offset(clock_ticks) / 3;
+                draw_bike(&deco_bike, deco_x - bx0, deco_y + by0);
+                // "ReGravity Defied" title + mod name, centered, bobbing up and
+                // down together. Same styling as the league select title: "Re"
+                // green, the rest black, 2x scale, white outline for legibility.
+                int fy = float_offset(clock_ticks);
+                int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                draw_string_scaled_outlined(title_x, 56 + fy, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 56 + fy, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                if (MOD_NAME[0]) {
+                    char mbuf[24];
+                    char* me = str_cat(mbuf, MOD_NAME);
+                    str_cat(me, " MOD");
+                    draw_string_centered_outlined(78 + fy, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
+                }
+                if (blink) draw_string_centered_outlined(120, "PRESS START", COLOR(0, 0, 0), COLOR(31, 31, 31));
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
                 // Wall-clock phase (16384 Hz / 819 ≈ 20 steps/s) so the flag waves
