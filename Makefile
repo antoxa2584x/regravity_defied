@@ -72,7 +72,7 @@ $(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
 
 $(TARGET)_$(1)_v$(VERSION).gba: $(TARGET)_$(1)_v$(VERSION).elf
 	$$(OBJCOPY) -v -O binary $$< $$@
-	$$(PYTHON) gbafix.py $$@
+	$$(PYTHON) gbafix.py $$@ -t "REGRAVITY" -c "RGDE" -m "00" -v $(VERSION)
 endef
 
 $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
