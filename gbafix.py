@@ -26,7 +26,7 @@ NINTENDO_LOGO = bytes([
 assert len(NINTENDO_LOGO) == 156, f"logo must be 156 bytes, got {len(NINTENDO_LOGO)}"
 
 
-def fix_gba(path):
+def fix_gba(path, title=None, code=None, version=None, maker=None):
     with open(path, 'rb') as f:
         rom = bytearray(f.read())
 
@@ -35,6 +35,49 @@ def fix_gba(path):
 
     # Write Nintendo logo at header offset 0x04
     rom[0x04:0x04 + 156] = NINTENDO_LOGO
+
+    # Write Game Title at header offset 0xA0 (max 12 chars)
+    if title:
+        title_bytes = title.upper().encode('ascii')[:12]
+        rom[0xA0:0xA0 + len(title_bytes)] = title_bytes
+        # Pad with zeros if shorter than 12
+        if len(title_bytes) < 12:
+            rom[0xA0 + len(title_bytes):0xA0 + 12] = b'\x00' * (12 - len(title_bytes))
+
+    # Write Game Code at header offset 0xAC (4 chars)
+    if code:
+        code_bytes = code.upper().encode('ascii')[:4]
+        rom[0xAC:0xAC + len(code_bytes)] = code_bytes
+        # Pad with zeros if shorter than 4
+        if len(code_bytes) < 4:
+            rom[0xAC + len(code_bytes):0xAC + 4] = b'\x00' * (4 - len(code_bytes))
+
+    # Write Maker Code at header offset 0xB0 (2 chars)
+    if maker:
+        maker_bytes = maker.upper().encode('ascii')[:2]
+        rom[0xB0:0xB0 + len(maker_bytes)] = maker_bytes
+        if len(maker_bytes) < 2:
+            rom[0xB0 + len(maker_bytes):0xB0 + 2] = b'\x00' * (2 - len(maker_bytes))
+    else:
+        # Default to "01" (Nintendo) or "ZZ" if not specified? 
+        # Many homebrews use "00" or "01". Let's use "00" as default if empty.
+        if rom[0xB0:0xB2] == b'\x00\x00':
+             rom[0xB0:0xB2] = b'00'
+
+    # Fixed value at 0xB2 (must be 0x96)
+    rom[0xB2] = 0x96
+
+    # Write Software version at header offset 0xBC (1 byte)
+    if version is not None:
+        try:
+            # Handle "0.9" -> 9, "1.2" -> 12, etc.
+            if isinstance(version, str) and '.' in version:
+                v = int(version.replace('.', '')) & 0xFF
+            else:
+                v = int(float(version)) & 0xFF
+            rom[0xBC] = v
+        except ValueError:
+            pass
 
     # Complement checksum: -(sum(bytes[0xA0..0xBC]) + 0x19) & 0xFF
     checksum = sum(rom[0xA0:0xBD]) & 0xFF
@@ -45,11 +88,22 @@ def fix_gba(path):
         f.write(rom)
     os.replace(tmp, path)
 
-    print(f"gbafix: {path}  logo=OK  checksum=0x{rom[0xBD]:02X}")
+    msg = f"gbafix: {path}  logo=OK  checksum=0x{rom[0xBD]:02X}"
+    if title: msg += f" title='{title[:12].upper()}'"
+    if code: msg += f" code='{code[:4].upper()}'"
+    if maker: msg += f" maker='{maker[:2].upper()}'"
+    if version is not None: msg += f" version={rom[0xBC]}"
+    print(msg)
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <rom.gba>", file=sys.stderr)
-        sys.exit(1)
-    fix_gba(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description='Fix GBA ROM header')
+    parser.add_argument('rom', help='Path to GBA ROM file')
+    parser.add_argument('-t', '--title', help='Game title (max 12 characters)')
+    parser.add_argument('-c', '--code', help='Game code (4 characters)')
+    parser.add_argument('-m', '--maker', help='Maker code (2 characters)')
+    parser.add_argument('-v', '--version', help='Software version (0-255)')
+    
+    args = parser.parse_args()
+    fix_gba(args.rom, args.title, args.code, args.version, args.maker)
