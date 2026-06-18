@@ -7,20 +7,23 @@ PYTHON ?= python3
 # Target name
 TARGET = ReGravity_Defied
 
+# Game version, baked in via -DGAME_VERSION and shown on the About screen.
+VERSION = 0.9
+
 # Build directories
 SRC_DIR = src
 BUILD_DIR = build
 LEVELS_DIR = levels
 
-# Each levels/*.mrg produces its own ROM: $(TARGET)_<name>.gba
+# Each levels/*.mrg produces its own ROM: $(TARGET)_<name>_v<version>.gba
 LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
-ROMS = $(foreach m,$(MODS),$(TARGET)_$(m).gba)
+ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).gba)
 
 # Compiler flags
 CFLAGS = -mthumb -mthumb-interwork -mlittle-endian -mcpu=arm7tdmi \
          -mtune=arm7tdmi -fno-strict-aliasing -fno-exceptions \
-         -O3 -Wall
+         -O3 -Wall -DGAME_VERSION='"$(VERSION)"'
 
 # Linker flags
 LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T gba.ld
@@ -40,7 +43,7 @@ assets:
 
 # Per-mod build rules. For each levels/<mod>.mrg we compile the sources into a
 # dedicated build/<mod>/ directory (so MOD_NAME differs per ROM), embed that
-# mod's level data, and link a separate $(TARGET)_<mod>.gba ROM.
+# mod's level data, and link a separate $(TARGET)_<mod>_v<version>.gba ROM.
 define MOD_template
 $(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
             $$(patsubst $$(SRC_DIR)/%.s, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_S)) \
@@ -64,10 +67,10 @@ $$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
 	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
 	cd $$(BUILD_DIR)/$(1) && $$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
 
-$(TARGET)_$(1).elf: $$($(1)_OBJS)
+$(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
 	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) -o $$@
 
-$(TARGET)_$(1).gba: $(TARGET)_$(1).elf
+$(TARGET)_$(1)_v$(VERSION).gba: $(TARGET)_$(1)_v$(VERSION).elf
 	$$(OBJCOPY) -v -O binary $$< $$@
 	$$(PYTHON) gbafix.py $$@
 endef
@@ -76,7 +79,7 @@ $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
 
 # Clean target
 clean:
-	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m).elf $(TARGET)_$(m).gba)
+	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).elf $(TARGET)_$(m)_v$(VERSION).gba)
 
 debug: CFLAGS += -DDEBUG
 debug: all

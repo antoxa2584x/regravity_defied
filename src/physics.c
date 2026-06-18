@@ -53,7 +53,26 @@ static int motoParam1, motoParam2, motoParam3, motoParam4, motoParam5,
            motoParam6, motoParam7, motoParam8, motoParam9, motoParam10;
 static int cur_league = 1;
 
+// Customization color indices into the per-part tinted sheet families in
+// gd_assets.h (set from the save by set_bike_colors). Defaults reproduce the
+// original art: yellow helmet, blue suit, red bike — see the PALETTE order in
+// tools/convert_assets.py.
+static int helmet_color = 1;  // YELLOW
+static int suit_color   = 4;  // BLUE
+static int bike_color   = 0;  // RED
+
+void set_bike_colors(int helmet, int suit, int bike) {
+    if (helmet >= 0 && helmet < CUSTOM_COLOR_COUNT) helmet_color = helmet;
+    if (suit   >= 0 && suit   < CUSTOM_COLOR_COUNT) suit_color   = suit;
+    if (bike   >= 0 && bike   < CUSTOM_COLOR_COUNT) bike_color   = bike;
+}
+
 // running physics state
+// Per-node gravity acceleration term divF(field_8, f259). f259 only changes in
+// apply_input (once per frame), so this is invariant across the whole solver
+// step — precomputed once per frame in update_physics to keep the expensive
+// 64-bit divF out of the per-substep accumulate_forces loop. Bit-identical.
+static int grav_term[6];
 static int field_31;          // engine drive accumulator
 static int field_37 = 32768;  // lean blend
 static int field_39;          // wheel-relative speed signed
@@ -268,6 +287,24 @@ static void set_league(int league) {
     }
 }
 
+// Precomputed inverse-mass*field_14 per input state, indexed [state][node]:
+//   0 = neutral, 1 = back lean, 2 = forward lean.
+// The reference apply_input rebuilds these from constants every frame, but
+// field_14 is fixed, so we build them once (after set_league sets field_14).
+// Values match apply_input's neutral-base-then-override result exactly: the
+// back/forward branches don't touch node 5, so it keeps the neutral coefficient.
+static int f259_tbl[3][6];
+static void build_f259_tables(void) {
+    static const int coef[3][6] = {
+        { 11915, 43690, 11915, 18724, 18724, 14563 },  // neutral
+        { 18724, 43690, 10082, 18724, 14563, 14563 },  // back
+        { 18724, 26214, 11915, 14563, 18724, 14563 },  // forward
+    };
+    for (int s = 0; s < 3; s++)
+        for (int i = 0; i < 6; i++)
+            f259_tbl[s][i] = mulF(coef[s][i], field_14);
+}
+
 static void zero_part(MotoPart* m) {
     m->x = m->y = m->angle = 0;
     m->f382 = m->f383 = m->f384 = 0;
@@ -351,7 +388,7 @@ IWRAM_FN static void accumulate_forces(int slot) {
         m->f385 = 0;
         m->f386 = 0;
         m->f387 = 0;
-        m->f386 -= divF(field_8, nodes[i].f259);
+        m->f386 -= grav_term[i];
     }
 
     if (!field_35) {
@@ -588,25 +625,10 @@ IWRAM_FN static void apply_input(void) {
         if (nodes[2].mc[index01].f384 < 6553) nodes[2].mc[index01].f384 = 0;
     }
 
-    nodes[0].f259 = mulF(11915, field_14);
-    nodes[4].f259 = mulF(18724, field_14);
-    nodes[3].f259 = mulF(18724, field_14);
-    nodes[1].f259 = mulF(43690, field_14);
-    nodes[2].f259 = mulF(11915, field_14);
-    nodes[5].f259 = mulF(14563, field_14);
-    if (isInputBack) {
-        nodes[0].f259 = mulF(18724, field_14);
-        nodes[4].f259 = mulF(14563, field_14);
-        nodes[3].f259 = mulF(18724, field_14);
-        nodes[1].f259 = mulF(43690, field_14);
-        nodes[2].f259 = mulF(10082, field_14);
-    } else if (isInputForward) {
-        nodes[0].f259 = mulF(18724, field_14);
-        nodes[4].f259 = mulF(18724, field_14);
-        nodes[3].f259 = mulF(14563, field_14);
-        nodes[1].f259 = mulF(26214, field_14);
-        nodes[2].f259 = mulF(11915, field_14);
-    }
+    const int* f259s = isInputBack ? f259_tbl[1]
+                     : isInputForward ? f259_tbl[2]
+                     : f259_tbl[0];
+    for (int i = 0; i < 6; i++) nodes[i].f259 = f259s[i];
 
     if (isInputBack || isInputForward) {
         int v4 = -uy;
@@ -651,6 +673,7 @@ IWRAM_FN static void apply_input(void) {
 void init_bike(Bike* b, const uint8_t* track_data) {
     load_level(track_data);
     set_league(cur_league);
+    build_f259_tables();
     field_7 = 1310;
     field_8 = 1638400;
 
@@ -689,6 +712,9 @@ IWRAM_FN void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) 
     field_36 = 0;
     field_69 = 0;
     apply_input();
+    // f259 is now settled for this frame; precompute the gravity term once so
+    // accumulate_forces avoids a 64-bit divF per node per substep.
+    for (int i = 0; i < 6; i++) grav_term[i] = divF(field_8, nodes[i].f259);
     step_solver(field_7);
 
     b->crash = field_36;
@@ -805,9 +831,9 @@ void draw_bike(Bike* b, int ox, int oy) {
 
     // Fender (front mudguard) behind, then engine block.
     draw_sprite_frame(fpx - FENDER_SHEET_FW / 2, fpy - FENDER_SHEET_FH / 2,
-                      fender_sheet, FENDER_SHEET_W, FENDER_SHEET_FW, FENDER_SHEET_FH, fframe);
+                      fender_sheets[bike_color], FENDER_SHEET_W, FENDER_SHEET_FW, FENDER_SHEET_FH, fframe);
     draw_sprite_frame(epx - ENGINE_SHEET_FW / 2, epy - ENGINE_SHEET_FH / 2,
-                      engine_sheet, ENGINE_SHEET_W, ENGINE_SHEET_FW, ENGINE_SHEET_FH, eframe);
+                      engine_sheets[bike_color], ENGINE_SHEET_W, ENGINE_SHEET_FW, ENGINE_SHEET_FH, eframe);
 
     // Tires, centred on each wheel node. League picks thin/thick rims
     // (cur_league: 0=100cc thin/thin, 1=175cc thin/thick, 2=220cc thick/thick).
@@ -856,10 +882,10 @@ void draw_bike(Bike* b, int ox, int oy) {
                + mulF(blend_tbl[blend_idx + 1], blend_t);
 
     // Back-to-front: two leg segments, torso, arm.
-    draw_body_part(rx[5], ry[5], rx[0], ry[0], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
-    draw_body_part(rx[0], ry[0], rx[1], ry[1], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
-    draw_body_part(rx[1], ry[1], rx[2], ry[2], body_sheet, BODY_SHEET_W, BODY_SHEET_FW, BODY_SHEET_FH, body_t, ox, oy);
-    draw_body_part(rx[2], ry[2], rx[4], ry[4], arm_sheet,  ARM_SHEET_W,  ARM_SHEET_FW,  ARM_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[5], ry[5], rx[0], ry[0], leg_sheets[suit_color],  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[0], ry[0], rx[1], ry[1], leg_sheets[suit_color],  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[1], ry[1], rx[2], ry[2], body_sheets[suit_color], BODY_SHEET_W, BODY_SHEET_FW, BODY_SHEET_FH, body_t, ox, oy);
+    draw_body_part(rx[2], ry[2], rx[4], ry[4], arm_sheets[suit_color],  ARM_SHEET_W,  ARM_SHEET_FW,  ARM_SHEET_FH,  32768,  ox, oy);
 
     // Helmet at pose point 3; angle locked to bike rotation. atan2(dx, dy) is
     // 102944 (pi/2) on flat ground — the helmet sheet's calibration base — and a
@@ -869,7 +895,7 @@ void draw_bike(Bike* b, int ox, int oy) {
     if (field_37 > 32768) helmetAngle += 20588;
     int hframe = calc_sprite_no(helmetAngle, -102943, TWO_PI_F16, 32, 1);
     draw_sprite_frame(hpx - HELMET_SHEET_FW / 2, hpy - HELMET_SHEET_FH / 2,
-                      helmet_sheet, HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
+                      helmet_sheets[helmet_color], HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
 
 #ifdef DEBUG
     debug_log("f37", field_37);

@@ -35,6 +35,11 @@ void draw_bike(Bike* b, int ox, int oy);
 // Select engine league before init_bike: 0=100cc, 1=175cc, 2=220cc.
 void physics_set_league(int league);
 
+// Set the rider/bike customization colors used by draw_bike. Each argument is
+// an index into the per-part tinted sheet families (0..CUSTOM_COLOR_COUNT-1);
+// out-of-range values are ignored. Persisted via the save (see main.c).
+void set_bike_colors(int helmet, int suit, int bike);
+
 // Precomputed track geometry, built once by init_bike()/load_level().
 // Points are absolute internal-X-sorted (strictly increasing px), so the
 // renderer can binary-search the on-screen window instead of re-decoding the

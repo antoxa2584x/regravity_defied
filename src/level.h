@@ -27,6 +27,9 @@ int league_unlocked(const uint8_t* mrg, int league);
 int track_unlocked(const uint8_t* mrg, int league, int track);
 void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finish_x, int* finish_y);
 void draw_track(const uint8_t* data, int cam_x, int cam_y);
+// Draw the start/finish flags. Call AFTER draw_bike so flags the rider passes
+// stay on top of the moto rather than being hidden behind it.
+void draw_track_flags(const uint8_t* data, int cam_x, int cam_y);
 // Draw a scaled-to-fit silhouette of the whole track inside the box (bx,by,bw,bh)
 // in `color`. Used by the track-select screen; does not touch the physics geometry.
 void draw_track_preview(const uint8_t* data, int bx, int by, int bw, int bh, color_t color);

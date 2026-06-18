@@ -2,10 +2,10 @@
 
 // SRAM lives at 0x0E000000 and must be accessed one byte at a time.
 #define SRAM ((volatile uint8_t*)0x0E000000)
-// "RGD4": bumped from "RGD3" when sound_on was added to SaveData. Old saves
-// have a smaller struct, so they no longer match and are cleared on load,
-// avoiding garbage being read past the old struct.
-#define SAVE_MAGIC 0x52474434u
+// "RGD5": bumped from "RGD4" when the customization colors were added to
+// SaveData. A magic change clears any older save, so a struct that grew never
+// reads garbage past the previous layout. ("RGD4" added sound_on over "RGD3".)
+#define SAVE_MAGIC 0x52474435u
 
 // Emulators/flashcarts enable 32 KB SRAM when this marker is present in the ROM.
 __attribute__((used)) static const char sram_sig[] = "SRAM_V113";
@@ -34,6 +34,9 @@ void save_load(void) {
         for (unsigned i = 0; i < sizeof(g_save); i++) p[i] = 0;
         g_save.magic = SAVE_MAGIC;
         g_save.sound_on = 1;  // SFX default to ON, not the zeroed 0
+        g_save.helmet_color = SAVE_DEFAULT_HELMET_COLOR;
+        g_save.suit_color   = SAVE_DEFAULT_SUIT_COLOR;
+        g_save.bike_color   = SAVE_DEFAULT_BIKE_COLOR;
         save_flush();
     }
 }
@@ -97,5 +100,19 @@ void save_set_sound_on(int on) {
     on = on ? 1 : 0;
     if (g_save.sound_on == on) return;  // nothing changed; skip SRAM write
     g_save.sound_on = (uint8_t)on;
+    save_flush();
+}
+
+int save_helmet_color(void) { return g_save.helmet_color; }
+int save_suit_color(void)   { return g_save.suit_color; }
+int save_bike_color(void)   { return g_save.bike_color; }
+
+void save_set_colors(int helmet, int suit, int bike) {
+    if (g_save.helmet_color == helmet &&
+        g_save.suit_color == suit &&
+        g_save.bike_color == bike) return;  // nothing changed; skip SRAM write
+    g_save.helmet_color = (uint8_t)helmet;
+    g_save.suit_color   = (uint8_t)suit;
+    g_save.bike_color   = (uint8_t)bike;
     save_flush();
 }

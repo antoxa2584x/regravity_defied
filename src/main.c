@@ -7,6 +7,11 @@
 #include "gd_assets.h"
 #include <stdlib.h>
 
+// Game version string, normally baked in by the Makefile (-DGAME_VERSION).
+#ifndef GAME_VERSION
+#define GAME_VERSION "0.9"
+#endif
+
 enum State {
     STATE_INTRO,
     STATE_SPLASH,
@@ -15,6 +20,7 @@ enum State {
     STATE_SETTINGS,
     STATE_CONFIRM_RESET,
     STATE_ABOUT,
+    STATE_CUSTOMIZE,
     STATE_TRACK_VIEW,
     STATE_GAME,
     STATE_FINISHED
@@ -28,8 +34,29 @@ static int tilt_mode = TILT_DPAD;
 // setting survives a power-off — unlike tilt_mode, which stays runtime-only.
 
 // Settings screen cursor options.
-enum { SET_TILT, SET_SOUND, SET_RESET, SET_ABOUT, SET_COUNT };
+enum { SET_TILT, SET_SOUND, SET_CUSTOMIZE, SET_RESET, SET_ABOUT, SET_COUNT };
 static int settings_cursor = SET_TILT;
+
+// Customize screen: which part the cursor is on, plus the live color indices
+// (loaded from the save on entry, applied to draw_bike as they change, and
+// persisted on exit). Indices are into the tinted sheet families / PALETTE.
+enum { CUST_HELMET, CUST_BODY, CUST_BIKE, CUST_COUNT };
+static int cust_cursor = CUST_HELMET;
+static int cust_color[CUST_COUNT];
+// Swatch + label for each palette color, in PALETTE order (see convert_assets.py).
+static const color_t cust_swatch[CUSTOM_COLOR_COUNT] = {
+    COLOR(31, 0, 0), COLOR(31, 28, 0), COLOR(0, 26, 0),
+    COLOR(0, 24, 28), COLOR(3, 7, 31), COLOR(26, 0, 28),
+};
+static const char* cust_name[CUSTOM_COLOR_COUNT] = {
+    "RED", "YELLOW", "GREEN", "CYAN", "BLUE", "PURPLE",
+};
+static const char* cust_part_name[CUST_COUNT] = { "HELMET", "BODY", "BIKE" };
+
+// Push the live customize selection into the renderer (helmet, suit, bike).
+static void cust_apply(void) {
+    set_bike_colors(cust_color[CUST_HELMET], cust_color[CUST_BODY], cust_color[CUST_BIKE]);
+}
 
 Bike player_bike;
 
@@ -188,6 +215,10 @@ int main() {
     init_bike(&deco_bike, get_track_data(mrg, 0, 0));
     deco_bike_launch();
 
+    // Apply the saved customization colors so the splash bike (and everything
+    // after) is drawn in the player's chosen colors from the first frame.
+    set_bike_colors(save_helmet_color(), save_suit_color(), save_bike_color());
+
     int level_idx = 0;
     int track_idx = 0;
     int cam_x = 0, cam_y = 0;
@@ -301,6 +332,14 @@ int main() {
                 if (keys_pressed & (KEY_LEFT | KEY_RIGHT | KEY_A)) {
                     save_set_sound_on(!save_sound_on());
                 }
+            } else if (settings_cursor == SET_CUSTOMIZE) {
+                if (keys_pressed & KEY_A) {
+                    state = STATE_CUSTOMIZE;
+                    cust_cursor = CUST_HELMET;
+                    cust_color[CUST_HELMET] = save_helmet_color();
+                    cust_color[CUST_BODY]   = save_suit_color();
+                    cust_color[CUST_BIKE]   = save_bike_color();
+                }
             } else if (settings_cursor == SET_RESET) {
                 if (keys_pressed & KEY_A) state = STATE_CONFIRM_RESET;
             } else if (settings_cursor == SET_ABOUT) {
@@ -312,6 +351,20 @@ int main() {
             }
             if (keys_pressed & (KEY_B | KEY_SELECT)) {
                 state = STATE_MENU_HARDNESS;
+            }
+        } else if (state == STATE_CUSTOMIZE) {
+            // UP/DOWN pick the part; LEFT/RIGHT cycle its color (wrapping), with
+            // the bike preview updating live. B/SELECT persists and returns.
+            if (keys_pressed & KEY_UP)   cust_cursor = (cust_cursor + CUST_COUNT - 1) % CUST_COUNT;
+            if (keys_pressed & KEY_DOWN) cust_cursor = (cust_cursor + 1) % CUST_COUNT;
+            if (keys_pressed & KEY_LEFT)
+                cust_color[cust_cursor] = (cust_color[cust_cursor] + CUSTOM_COLOR_COUNT - 1) % CUSTOM_COLOR_COUNT;
+            if (keys_pressed & KEY_RIGHT)
+                cust_color[cust_cursor] = (cust_color[cust_cursor] + 1) % CUSTOM_COLOR_COUNT;
+            if (keys_pressed & (KEY_LEFT | KEY_RIGHT)) cust_apply();
+            if (keys_pressed & (KEY_B | KEY_SELECT)) {
+                save_set_colors(cust_color[CUST_HELMET], cust_color[CUST_BODY], cust_color[CUST_BIKE]);
+                state = STATE_SETTINGS;
             }
         } else if (state == STATE_ABOUT) {
             // Konami-style unlock code. Each correct key advances the sequence;
@@ -475,7 +528,8 @@ int main() {
         int blinking_state = (state == STATE_SPLASH ||
                               state == STATE_MENU_HARDNESS ||
                               state == STATE_MENU_TRACK ||
-                              state == STATE_SETTINGS);
+                              state == STATE_SETTINGS ||
+                              state == STATE_CUSTOMIZE);
         // Only redraw when something visible can change: the game animates every
         // frame, a blinking screen on each toggle, and any screen on entry or a
         // key press. Static screens (intro, finished) are drawn once and skip
@@ -579,26 +633,30 @@ int main() {
                 char* e = str_cat(tbuf, "TILT: ");
                 str_cat(e, tilt_mode == TILT_DPAD ? "D-PAD" : "L/R SHOULDERS");
                 color_t tcol = (settings_cursor == SET_TILT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(54, tbuf, tcol, settings_cursor == SET_TILT, blink);
+                draw_menu_row(50, tbuf, tcol, settings_cursor == SET_TILT, blink);
 
                 char sbuf[16];
                 char* se = str_cat(sbuf, "SOUND: ");
                 str_cat(se, save_sound_on() ? "ON" : "OFF");
                 color_t scol = (settings_cursor == SET_SOUND) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(72, sbuf, scol, settings_cursor == SET_SOUND, blink);
+                draw_menu_row(66, sbuf, scol, settings_cursor == SET_SOUND, blink);
+
+                color_t ccol = (settings_cursor == SET_CUSTOMIZE) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
+                draw_menu_row(82, "CUSTOMIZE", ccol, settings_cursor == SET_CUSTOMIZE, blink);
 
                 color_t rcol = (settings_cursor == SET_RESET) ? COLOR(31, 0, 0) : COLOR(15, 8, 8);
-                draw_menu_row(90, "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
+                draw_menu_row(98, "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
 
                 color_t acol = (settings_cursor == SET_ABOUT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(108, "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
+                draw_menu_row(114, "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
 
-                draw_string_centered(130, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
-                draw_string_centered(142, "B: BACK", COLOR(10, 10, 10));
+                draw_string_centered(134, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
+                draw_string_centered(146, "B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_ABOUT) {
                 int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
                 draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
                 draw_string_scaled(tx + str_px_width("Re") * 2, 14, "Gravity Defied", COLOR(0, 0, 0), 2);
+                draw_string_centered(32, "VERSION " GAME_VERSION, COLOR(0, 22, 0));
                 draw_string_centered(44, "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
                 draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
                 draw_string_centered(86, "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
@@ -606,6 +664,30 @@ int main() {
                 if (cheat_done)
                     draw_string_centered(120, "ALL LEVELS UNLOCKED!", COLOR(0, 31, 0));
                 draw_string_centered(140, "B: BACK", COLOR(10, 10, 10));
+            } else if (state == STATE_CUSTOMIZE) {
+                draw_string_centered(12, "CUSTOMIZE", COLOR(0, 0, 0));
+
+                // Live preview: the neutral splash bike, centered, drawn in the
+                // colors currently selected (cust_apply has pushed them already).
+                // draw_bike treats (ox, oy) as a camera offset, so offset by the
+                // frame node's own pixel coords to land it at (cx, cy).
+                int bx0 = get_pixel_coord(deco_bike.nodes[0].x);
+                int by0 = get_pixel_coord(deco_bike.nodes[0].y);
+                draw_bike(&deco_bike, SCREEN_WIDTH / 2 - bx0, 60 + by0);
+
+                for (int i = 0; i < CUST_COUNT; i++) {
+                    int y = 92 + i * 16;
+                    int ci = cust_color[i];
+                    color_t tc = (cust_cursor == i) ? COLOR(0, 31, 0) : COLOR(10, 10, 10);
+                    if (cust_cursor == i && blink) draw_string(26, y, ">", tc);
+                    draw_string(38, y, cust_part_name[i], tc);
+                    draw_string(110, y, cust_name[ci], tc);
+                    // Outlined swatch of the selected color.
+                    draw_rect(186, y - 1, 22, 9, COLOR(0, 0, 0));
+                    draw_rect(187, y, 20, 7, cust_swatch[ci]);
+                }
+
+                draw_string_centered(146, "L/R: COLOR  U/D: PART  B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_CONFIRM_RESET) {
                 draw_rect(40, 55, 160, 50, COLOR(31, 31, 31));
                 draw_rect(42, 57, 156, 46, COLOR(0, 0, 0));
@@ -687,6 +769,8 @@ int main() {
                 if (state == STATE_GAME || state == STATE_FINISHED) {
                     draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
                 }
+                // Flags last so one the rider is passing stays in front of the moto.
+                draw_track_flags(cur_track, cam_x, cam_y);
 
                 // HUD on top of the track so the timer stays readable. Outlined
                 // so it stays legible over track lines and the rider.
