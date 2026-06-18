@@ -54,6 +54,11 @@ static int motoParam1, motoParam2, motoParam3, motoParam4, motoParam5,
 static int cur_league = 1;
 
 // running physics state
+// Per-node gravity acceleration term divF(field_8, f259). f259 only changes in
+// apply_input (once per frame), so this is invariant across the whole solver
+// step — precomputed once per frame in update_physics to keep the expensive
+// 64-bit divF out of the per-substep accumulate_forces loop. Bit-identical.
+static int grav_term[6];
 static int field_31;          // engine drive accumulator
 static int field_37 = 32768;  // lean blend
 static int field_39;          // wheel-relative speed signed
@@ -268,6 +273,24 @@ static void set_league(int league) {
     }
 }
 
+// Precomputed inverse-mass*field_14 per input state, indexed [state][node]:
+//   0 = neutral, 1 = back lean, 2 = forward lean.
+// The reference apply_input rebuilds these from constants every frame, but
+// field_14 is fixed, so we build them once (after set_league sets field_14).
+// Values match apply_input's neutral-base-then-override result exactly: the
+// back/forward branches don't touch node 5, so it keeps the neutral coefficient.
+static int f259_tbl[3][6];
+static void build_f259_tables(void) {
+    static const int coef[3][6] = {
+        { 11915, 43690, 11915, 18724, 18724, 14563 },  // neutral
+        { 18724, 43690, 10082, 18724, 14563, 14563 },  // back
+        { 18724, 26214, 11915, 14563, 18724, 14563 },  // forward
+    };
+    for (int s = 0; s < 3; s++)
+        for (int i = 0; i < 6; i++)
+            f259_tbl[s][i] = mulF(coef[s][i], field_14);
+}
+
 static void zero_part(MotoPart* m) {
     m->x = m->y = m->angle = 0;
     m->f382 = m->f383 = m->f384 = 0;
@@ -351,7 +374,7 @@ IWRAM_FN static void accumulate_forces(int slot) {
         m->f385 = 0;
         m->f386 = 0;
         m->f387 = 0;
-        m->f386 -= divF(field_8, nodes[i].f259);
+        m->f386 -= grav_term[i];
     }
 
     if (!field_35) {
@@ -588,25 +611,10 @@ IWRAM_FN static void apply_input(void) {
         if (nodes[2].mc[index01].f384 < 6553) nodes[2].mc[index01].f384 = 0;
     }
 
-    nodes[0].f259 = mulF(11915, field_14);
-    nodes[4].f259 = mulF(18724, field_14);
-    nodes[3].f259 = mulF(18724, field_14);
-    nodes[1].f259 = mulF(43690, field_14);
-    nodes[2].f259 = mulF(11915, field_14);
-    nodes[5].f259 = mulF(14563, field_14);
-    if (isInputBack) {
-        nodes[0].f259 = mulF(18724, field_14);
-        nodes[4].f259 = mulF(14563, field_14);
-        nodes[3].f259 = mulF(18724, field_14);
-        nodes[1].f259 = mulF(43690, field_14);
-        nodes[2].f259 = mulF(10082, field_14);
-    } else if (isInputForward) {
-        nodes[0].f259 = mulF(18724, field_14);
-        nodes[4].f259 = mulF(18724, field_14);
-        nodes[3].f259 = mulF(14563, field_14);
-        nodes[1].f259 = mulF(26214, field_14);
-        nodes[2].f259 = mulF(11915, field_14);
-    }
+    const int* f259s = isInputBack ? f259_tbl[1]
+                     : isInputForward ? f259_tbl[2]
+                     : f259_tbl[0];
+    for (int i = 0; i < 6; i++) nodes[i].f259 = f259s[i];
 
     if (isInputBack || isInputForward) {
         int v4 = -uy;
@@ -651,6 +659,7 @@ IWRAM_FN static void apply_input(void) {
 void init_bike(Bike* b, const uint8_t* track_data) {
     load_level(track_data);
     set_league(cur_league);
+    build_f259_tables();
     field_7 = 1310;
     field_8 = 1638400;
 
@@ -689,6 +698,9 @@ IWRAM_FN void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) 
     field_36 = 0;
     field_69 = 0;
     apply_input();
+    // f259 is now settled for this frame; precompute the gravity term once so
+    // accumulate_forces avoids a 64-bit divF per node per substep.
+    for (int i = 0; i < 6; i++) grav_term[i] = divF(field_8, nodes[i].f259);
     step_solver(field_7);
 
     b->crash = field_36;
