@@ -7,6 +7,11 @@
 #include "gd_assets.h"
 #include <stdlib.h>
 
+// Game version string, normally baked in by the Makefile (-DGAME_VERSION).
+#ifndef GAME_VERSION
+#define GAME_VERSION "0.8"
+#endif
+
 enum State {
     STATE_INTRO,
     STATE_SPLASH,
@@ -599,6 +604,7 @@ int main() {
                 int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
                 draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
                 draw_string_scaled(tx + str_px_width("Re") * 2, 14, "Gravity Defied", COLOR(0, 0, 0), 2);
+                draw_string_centered(32, "VERSION " GAME_VERSION, COLOR(0, 22, 0));
                 draw_string_centered(44, "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
                 draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
                 draw_string_centered(86, "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
