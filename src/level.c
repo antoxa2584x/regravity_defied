@@ -219,20 +219,33 @@ IWRAM_FN static int seg_offscreen(int x1, int x2) {
            (x1 >= SCREEN_WIDTH + RIBBON_DEPTH && x2 >= SCREEN_WIDTH + RIBBON_DEPTH);
 }
 
-// Draw a flag pole at the near point with an animated flag sprite from
-// ref/assets/sprites.png (start = pennant, finish = checkered).
-static void draw_flag(int nx, int ny, int fx, int fy, int finish) {
-    if (nx < -RIBBON_DEPTH || nx >= SCREEN_WIDTH + RIBBON_DEPTH) return;
+// Draw one pole of an animated flag (pole line + sprite) at base point (x,y),
+// using the start (pennant) or finish (checkered) frame from
+// ref/assets/sprites.png. Each flag has two poles at different depths.
+static void flag_pole(int x, int y, int finish) {
     int slot = (s_flag_tick >> 3) & 3;
     const color_t* frame = finish
         ? flag_finish_frames[flag_finish_anim[slot]]
         : flag_start_frames[flag_start_anim[slot]];
-    // Far (ribbon) side pole
-    draw_line(fx, fy, fx, fy - 28, COLOR(0, 0, 0));
-    draw_sprite(fx + 1, fy - 28, frame, FLAG_W, FLAG_H);
-    // Near (riding) side pole
-    draw_line(nx, ny, nx, ny - 28, COLOR(0, 0, 0));
-    draw_sprite(nx + 1, ny - 28, frame, FLAG_W, FLAG_H);
+    draw_line(x, y, x, y - 28, COLOR(0, 0, 0));
+    draw_sprite(x + 1, y - 28, frame, FLAG_W, FLAG_H);
+}
+
+// Draw the start+finish flag poles for one depth layer. near==0 draws the far
+// (ribbon-side) poles, called with the track so they sit behind the moto;
+// near==1 draws the near (riding-side) poles, called after the moto so they sit
+// in front of it — the rider passes between the two poles of each flag.
+static void draw_flag_layer(const TrackGeom* g, int ox, int oy, int near) {
+    const int flag_idx[2] = { g->start_flag_idx, g->finish_flag_idx };
+    for (int k = 0; k < 2; k++) {       // k: 0 = start flag, 1 = finish flag
+        int s = flag_idx[k];
+        if (s < 0 || s >= g->count) continue;
+        int nx, ny, fx, fy;
+        project_point(g->px[s], g->py[s], ox, oy, &nx, &ny, &fx, &fy);
+        if (nx < -RIBBON_DEPTH || nx >= SCREEN_WIDTH + RIBBON_DEPTH) continue;
+        if (near) flag_pole(nx, ny, k);
+        else      flag_pole(fx, fy, k);
+    }
 }
 
 // Binary search for the first point whose near (screen) X is >= target_px.
@@ -287,16 +300,22 @@ IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
         pnx = nnx; pny = nny; pfx = nfx; pfy = nfy;
     }
 
-    int si = g->start_flag_idx;
-    if (si >= 0 && si < g->count) {
-        int nx, ny, fx, fy;
-        project_point(px[si], py[si], ox, oy, &nx, &ny, &fx, &fy);
-        draw_flag(nx, ny, fx, fy, 0);
-    }
-    int fi = g->finish_flag_idx;
-    if (fi >= 0 && fi < g->count) {
-        int nx, ny, fx, fy;
-        project_point(px[fi], py[fi], ox, oy, &nx, &ny, &fx, &fy);
-        draw_flag(nx, ny, fx, fy, 1);
-    }
+    // Far (ribbon-side) poles draw with the track, behind the moto.
+    draw_flag_layer(g, ox, oy, 0);
+}
+
+// Near (riding-side) flag poles. Drawn in a separate pass after draw_bike so the
+// pole on the rider's side stays in front of the moto (single-buffered MODE3 is
+// a painter's model: later draws win), while the far poles drawn in draw_track
+// stay behind it — so the rider passes between the two poles of each flag.
+IWRAM_FN void draw_track_flags(const uint8_t* data, int cam_x, int cam_y) {
+    if (*data != 0x33) return;
+
+    const TrackGeom* g = physics_get_track_geom();
+    if (g->count < 2) return;
+
+    int ox = SCREEN_WIDTH / 2 - cam_x;
+    int oy = SCREEN_HEIGHT / 2 + cam_y;
+
+    draw_flag_layer(g, ox, oy, 1);
 }

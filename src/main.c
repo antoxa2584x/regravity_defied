@@ -687,6 +687,8 @@ int main() {
                 if (state == STATE_GAME || state == STATE_FINISHED) {
                     draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
                 }
+                // Flags last so one the rider is passing stays in front of the moto.
+                draw_track_flags(cur_track, cam_x, cam_y);
 
                 // HUD on top of the track so the timer stays readable. Outlined
                 // so it stays legible over track lines and the rider.
