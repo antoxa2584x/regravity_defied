@@ -8,7 +8,7 @@ PYTHON ?= python3
 TARGET = ReGravity_Defied
 
 # Game version, baked in via -DGAME_VERSION and shown on the About screen.
-VERSION = 0.8
+VERSION = 0.9
 
 # Build directories
 SRC_DIR = src

@@ -22,7 +22,16 @@ typedef struct {
     uint32_t best[MAX_TRACKS_TOTAL];         // best time in frames (0 = none)
     uint16_t last_track[NUM_LEAGUES];        // last track opened per league
     uint8_t  sound_on;                       // 1 = SFX enabled (default), 0 = muted
+    uint8_t  helmet_color;                   // customization color indices into the
+    uint8_t  suit_color;                     // per-part tinted sheet families
+    uint8_t  bike_color;                     // (0..CUSTOM_COLOR_COUNT-1)
 } SaveData;
+
+// Default customization colors (match the original art / PALETTE order in
+// tools/convert_assets.py): yellow helmet, blue suit, red bike.
+#define SAVE_DEFAULT_HELMET_COLOR 1
+#define SAVE_DEFAULT_SUIT_COLOR   4
+#define SAVE_DEFAULT_BIKE_COLOR   0
 
 extern SaveData g_save;
 
@@ -52,5 +61,13 @@ void save_set_last_track(int league, int track);
 // Sound on/off toggle from the settings screen. Setter persists immediately.
 int  save_sound_on(void);
 void save_set_sound_on(int on);
+
+// Rider/bike customization colors from the customize screen, each an index into
+// the per-part tinted sheet families. Setter persists immediately (and skips
+// the SRAM write when nothing changed).
+int  save_helmet_color(void);
+int  save_suit_color(void);
+int  save_bike_color(void);
+void save_set_colors(int helmet, int suit, int bike);
 
 #endif // SAVE_H

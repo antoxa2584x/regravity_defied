@@ -53,6 +53,20 @@ static int motoParam1, motoParam2, motoParam3, motoParam4, motoParam5,
            motoParam6, motoParam7, motoParam8, motoParam9, motoParam10;
 static int cur_league = 1;
 
+// Customization color indices into the per-part tinted sheet families in
+// gd_assets.h (set from the save by set_bike_colors). Defaults reproduce the
+// original art: yellow helmet, blue suit, red bike — see the PALETTE order in
+// tools/convert_assets.py.
+static int helmet_color = 1;  // YELLOW
+static int suit_color   = 4;  // BLUE
+static int bike_color   = 0;  // RED
+
+void set_bike_colors(int helmet, int suit, int bike) {
+    if (helmet >= 0 && helmet < CUSTOM_COLOR_COUNT) helmet_color = helmet;
+    if (suit   >= 0 && suit   < CUSTOM_COLOR_COUNT) suit_color   = suit;
+    if (bike   >= 0 && bike   < CUSTOM_COLOR_COUNT) bike_color   = bike;
+}
+
 // running physics state
 // Per-node gravity acceleration term divF(field_8, f259). f259 only changes in
 // apply_input (once per frame), so this is invariant across the whole solver
@@ -817,9 +831,9 @@ void draw_bike(Bike* b, int ox, int oy) {
 
     // Fender (front mudguard) behind, then engine block.
     draw_sprite_frame(fpx - FENDER_SHEET_FW / 2, fpy - FENDER_SHEET_FH / 2,
-                      fender_sheet, FENDER_SHEET_W, FENDER_SHEET_FW, FENDER_SHEET_FH, fframe);
+                      fender_sheets[bike_color], FENDER_SHEET_W, FENDER_SHEET_FW, FENDER_SHEET_FH, fframe);
     draw_sprite_frame(epx - ENGINE_SHEET_FW / 2, epy - ENGINE_SHEET_FH / 2,
-                      engine_sheet, ENGINE_SHEET_W, ENGINE_SHEET_FW, ENGINE_SHEET_FH, eframe);
+                      engine_sheets[bike_color], ENGINE_SHEET_W, ENGINE_SHEET_FW, ENGINE_SHEET_FH, eframe);
 
     // Tires, centred on each wheel node. League picks thin/thick rims
     // (cur_league: 0=100cc thin/thin, 1=175cc thin/thick, 2=220cc thick/thick).
@@ -868,10 +882,10 @@ void draw_bike(Bike* b, int ox, int oy) {
                + mulF(blend_tbl[blend_idx + 1], blend_t);
 
     // Back-to-front: two leg segments, torso, arm.
-    draw_body_part(rx[5], ry[5], rx[0], ry[0], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
-    draw_body_part(rx[0], ry[0], rx[1], ry[1], leg_sheet,  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
-    draw_body_part(rx[1], ry[1], rx[2], ry[2], body_sheet, BODY_SHEET_W, BODY_SHEET_FW, BODY_SHEET_FH, body_t, ox, oy);
-    draw_body_part(rx[2], ry[2], rx[4], ry[4], arm_sheet,  ARM_SHEET_W,  ARM_SHEET_FW,  ARM_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[5], ry[5], rx[0], ry[0], leg_sheets[suit_color],  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[0], ry[0], rx[1], ry[1], leg_sheets[suit_color],  LEG_SHEET_W,  LEG_SHEET_FW,  LEG_SHEET_FH,  32768,  ox, oy);
+    draw_body_part(rx[1], ry[1], rx[2], ry[2], body_sheets[suit_color], BODY_SHEET_W, BODY_SHEET_FW, BODY_SHEET_FH, body_t, ox, oy);
+    draw_body_part(rx[2], ry[2], rx[4], ry[4], arm_sheets[suit_color],  ARM_SHEET_W,  ARM_SHEET_FW,  ARM_SHEET_FH,  32768,  ox, oy);
 
     // Helmet at pose point 3; angle locked to bike rotation. atan2(dx, dy) is
     // 102944 (pi/2) on flat ground — the helmet sheet's calibration base — and a
@@ -881,7 +895,7 @@ void draw_bike(Bike* b, int ox, int oy) {
     if (field_37 > 32768) helmetAngle += 20588;
     int hframe = calc_sprite_no(helmetAngle, -102943, TWO_PI_F16, 32, 1);
     draw_sprite_frame(hpx - HELMET_SHEET_FW / 2, hpy - HELMET_SHEET_FH / 2,
-                      helmet_sheet, HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
+                      helmet_sheets[helmet_color], HELMET_SHEET_W, HELMET_SHEET_FW, HELMET_SHEET_FH, hframe);
 
 #ifdef DEBUG
     debug_log("f37", field_37);
