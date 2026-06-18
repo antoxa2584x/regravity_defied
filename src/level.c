@@ -82,6 +82,11 @@ void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finis
     int32_t finish_threshold = (int32_t)read_be32(p); p += 4;
     int32_t finish_y_ignored = read_be32(p); p += 4; (void)finish_y_ignored;
 
+    // Fallbacks: if no vertex lies past a threshold, gate on the threshold
+    // itself. Normally these are overwritten below with the flag vertex X so the
+    // timer triggers exactly where the flag is drawn (the first point past the
+    // threshold) — not at the spawn point, which sits on the threshold and would
+    // start the clock immediately.
     if (start_x) *start_x = get_pixel_coord(start_threshold);
     if (finish_x) *finish_x = get_pixel_coord(finish_threshold);
 
@@ -105,10 +110,12 @@ void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finis
         }
 
         if (!found_start && cur_x > start_threshold) {
+            if (start_x) *start_x = get_pixel_coord(cur_x);
             if (start_y) *start_y = get_pixel_coord(cur_y);
             found_start = 1;
         }
         if (!found_finish && cur_x > finish_threshold) {
+            if (finish_x) *finish_x = get_pixel_coord(cur_x);
             if (finish_y) *finish_y = get_pixel_coord(cur_y);
             found_finish = 1;
         }
