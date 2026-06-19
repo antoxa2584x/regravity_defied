@@ -1,7 +1,7 @@
 #ifndef PHYSICS_H
 #define PHYSICS_H
 
-#include "gba.h"
+#include "platform.h"
 
 #define FP_SHIFT 16
 #define TO_FP(x) ((int32_t)((x) << FP_SHIFT))

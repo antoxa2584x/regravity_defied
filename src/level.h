@@ -1,7 +1,7 @@
 #ifndef LEVEL_H
 #define LEVEL_H
 
-#include "gba.h"
+#include "platform.h"
 
 // Name of the embedded levels/*.mrg mod, baked in by the Makefile per ROM.
 // Shown on the league screen under the title. Defaults empty for standalone builds.

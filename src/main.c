@@ -1,4 +1,4 @@
-#include "gba.h"
+#include "platform.h"
 #include "graphics.h"
 #include "level.h"
 #include "physics.h"
@@ -169,7 +169,7 @@ static void draw_checker_bg(int phase) {
 static int float_offset(uint32_t clock_ticks) {
     static const signed char wave[16] =
         { 0, 3, 5, 6, 6, 6, 5, 3, 0, -3, -5, -6, -6, -6, -5, -3 };
-    return wave[(clock_ticks / 2048) & 15];
+    return wave[(clock_ticks / FLOAT_TICKS) & 15];
 }
 
 // Tiny LCG -> integer in [lo, hi]. Only used to give the splash bike a varied
@@ -188,21 +188,11 @@ static void deco_bike_launch(void) {
 }
 
 int main() {
-    // Enable ROM prefetch buffer: sequential ROM reads drop from 4 to 1 wait state.
-    // Bit 14 = prefetch enable; rest are sensible wait state values.
-    REG_WAITCNT = 0x4317;
-
-    // EWRAM to 1 wait state (BIOS default is 2). The frame back buffer lives in
-    // EWRAM and is both drawn into and DMA-copied to VRAM each frame, so this
-    // ~33% RAM speedup directly buys back the cost of double-buffering.
-    REG_MEMCTL = 0x0E000020;
-
-    // Free-running timer drives the fixed-timestep loop: physics always advances
-    // at 60 Hz regardless of how many frames the renderer actually presents.
-    REG_TM0CNT_L = 0;
-    REG_TM0CNT_H = TM_ENABLE | TM_PRESCALE_1024;
-
-    REG_DISPCNT = MODE3 | BG2_ENABLE;
+    // Bring up the display, the free-running game-clock timer, and any memory
+    // tuning for this target (see platform_<target>.c). The timer drives the
+    // fixed-timestep loop: physics always advances at 60 Hz regardless of how
+    // many frames the renderer actually presents.
+    platform_init();
     sound_init();
     save_load();
     debug_init();
@@ -245,12 +235,12 @@ int main() {
     int prev_state = -1;   // force a redraw on the first frame
     int prev_blink = -1;
 
-    uint16_t tm_prev = REG_TM0CNT_L;  // last timer sample
+    uint16_t tm_prev = platform_timer();  // last timer sample
     int tm_accum = 0;                 // unspent time, in timer ticks
     uint32_t clock_ticks = 0;         // wall-clock tick count (fps-independent)
 
     while (1) {
-        uint16_t keys = ~REG_KEYINPUT & 0x03FF;
+        uint16_t keys = platform_keys();
         uint16_t keys_pressed = keys & ~prev_keys;
         prev_keys = keys;
 
@@ -279,7 +269,7 @@ int main() {
         // time elapsed since last loop. At 30 fps render this is 2 per frame,
         // keeping the simulation at full speed. Clamp to avoid a catch-up spiral
         // after a long stall (e.g. level load).
-        uint16_t tm_now = REG_TM0CNT_L;
+        uint16_t tm_now = platform_timer();
         uint16_t dt = (uint16_t)(tm_now - tm_prev);
         tm_accum += dt;
         clock_ticks += dt;            // drives the blink at a steady wall-clock rate
@@ -524,7 +514,7 @@ int main() {
         // Timed off the wall-clock (TM0 = 16384 Hz, so 8192 ticks = 0.5 s) rather
         // than the frame count, so the blink rate is steady even when a heavy
         // screen (e.g. the animated league menu) renders below 60 fps.
-        int blink = ((clock_ticks / 8192) & 1) == 0;
+        int blink = ((clock_ticks / BLINK_TICKS) & 1) == 0;
         int blinking_state = (state == STATE_SPLASH ||
                               state == STATE_MENU_HARDNESS ||
                               state == STATE_MENU_TRACK ||
@@ -560,7 +550,7 @@ int main() {
                 draw_string_centered(76, "Remake by rgaming.com.ua", COLOR(0, 31, 0));
             } else if (state == STATE_SPLASH) {
                 // Animated checkered-flag backdrop, matching the league select.
-                draw_checker_bg(clock_ticks / 1638);
+                draw_checker_bg(clock_ticks / CHECKER_TICKS);
                 // Decorative bike driving across, slightly bobbing. draw_bike
                 // treats (ox, oy) as a camera offset, so we offset by the frame
                 // node's own pixel coords to land it at (deco_x, lane + bob).
@@ -586,7 +576,7 @@ int main() {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
                 // Wall-clock phase (16384 Hz / 819 ≈ 20 steps/s) so the flag waves
                 // at the same speed whether the menu renders at 60 or fewer fps.
-                draw_checker_bg(clock_ticks / 1638);   // animated semi-transparent checkered flag
+                draw_checker_bg(clock_ticks / CHECKER_TICKS);   // animated semi-transparent checkered flag
                 // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
                 // White 1px outline keeps it readable over the checkered backdrop.
                 int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
@@ -835,7 +825,7 @@ int main() {
         // Wait for VBlank, then DMA the finished frame to VRAM — the copy
         // outruns the scan beam, so nothing tears. Skip the copy when we did
         // not redraw: VRAM already holds the last presented frame.
-        vsync();
+        platform_vsync();
         if (redraw) present_frame();
 
         // Bring the freshly drawn screen up from black. The blocking fades ate
@@ -843,7 +833,7 @@ int main() {
         // step would jump; resync the accumulator after the transition.
         if (do_fade) {
             fade_in();
-            tm_prev = REG_TM0CNT_L;
+            tm_prev = platform_timer();
             tm_accum = 0;
         }
         sound_tick();

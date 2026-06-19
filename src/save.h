@@ -1,7 +1,7 @@
 #ifndef SAVE_H
 #define SAVE_H
 
-#include "gba.h"
+#include "platform.h"
 
 // Number of engine leagues. Fixed by the levels.mrg layout (it has no league
 // count header), but the tracks-per-league split is read from the file and may
@@ -35,7 +35,14 @@ typedef struct {
 
 extern SaveData g_save;
 
-// Load progress from SRAM into g_save; reset to defaults if no valid save.
+// Persistent-storage backend, implemented per target (save_gba.c uses battery
+// SRAM; save_nds.c uses a file on the SD card via libfat). read fills `dst`
+// from storage (zeroing it when no store is present, so the magic check falls
+// back to defaults); write persists `src`.
+void save_backend_read(void* dst, int n);
+void save_backend_write(const void* src, int n);
+
+// Load progress from storage into g_save; reset to defaults if no valid save.
 void save_load(void);
 // Write g_save back to SRAM.
 void save_flush(void);

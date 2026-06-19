@@ -28,8 +28,9 @@ CFLAGS = -mthumb -mthumb-interwork -mlittle-endian -mcpu=arm7tdmi \
 # Linker flags
 LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T gba.ld
 
-# Source files
-SRCS_C = $(wildcard $(SRC_DIR)/*.c)
+# Source files. Portable game code + the *_gba.c hardware backends; the *_nds.c
+# backends are for the native DS build only (see Makefile.nds).
+SRCS_C = $(filter-out %_nds.c,$(wildcard $(SRC_DIR)/*.c))
 SRCS_S = $(wildcard $(SRC_DIR)/*.s)
 
 # Default target: build one ROM per levels/*.mrg

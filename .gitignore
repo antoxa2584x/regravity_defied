@@ -2,11 +2,15 @@
 /.idea/
 /ref/
 /build/
+/build_nds/
 /.ai/
 /regravity_defied.elf
 /regravity_defied.sav
 # Per-mod build outputs (one ROM per levels/*.mrg)
 /ReGravity_Defied_*.gba
+/ReGravity_Defied_*.nds
 /ReGravity_Defied_*.elf
 /ReGravity_Defied_*.sav
+# ndstool/calico link map dumps
+/*.lst
 /levels/1000.mrg

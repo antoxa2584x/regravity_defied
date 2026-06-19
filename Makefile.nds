@@ -1,0 +1,91 @@
+# Native Nintendo DS / DSi build (devkitARM + libnds + calico + libfat).
+#
+# This is the DS counterpart to the bare-metal GBA Makefile. It compiles the
+# same portable game code (graphics.c, level.c, physics.c, main.c, save.c) and
+# swaps the GBA hardware backends (*_gba.c) for the DS ones (*_nds.c), then
+# packages an ARM9 .elf with calico's prebuilt ARM7 core into a .nds via ndstool.
+#
+#   make -f Makefile.nds          # build one .nds per levels/*.mrg
+#   make -f Makefile.nds clean
+#
+# Requires the devkitPro DS toolchain (pacman group nds-dev) and DEVKITPRO set.
+
+ifeq ($(strip $(DEVKITPRO)),)
+$(error Set DEVKITPRO in your environment, e.g. export DEVKITPRO=/opt/devkitpro)
+endif
+
+DEVKITARM ?= $(DEVKITPRO)/devkitARM
+CALICO    := $(DEVKITPRO)/calico
+LIBNDS    := $(DEVKITPRO)/libnds
+
+PREFIX  := $(DEVKITARM)/bin/arm-none-eabi-
+CC      := $(PREFIX)gcc
+OBJCOPY := $(PREFIX)objcopy
+NDSTOOL := $(DEVKITPRO)/tools/bin/ndstool
+PYTHON  ?= python3
+
+TARGET  = ReGravity_Defied
+VERSION = 0.9
+
+SRC_DIR    = src
+BUILD_DIR  = build_nds
+LEVELS_DIR = levels
+
+# One .nds per levels/*.mrg, mirroring the GBA build's per-mod ROMs.
+LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
+MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
+ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).nds)
+
+# Portable game code + the DS hardware backends (exclude the GBA *_gba.c ones).
+SRCS_C = $(filter-out %_gba.c,$(wildcard $(SRC_DIR)/*.c))
+
+# ARM9 (DS main CPU): ARMv5TE. -DPLATFORM_NDS selects the DS code paths in the
+# shared headers; __NDS__/ARM9 are what libnds expects.
+ARCH    = -mthumb -mthumb-interwork -march=armv5te -mtune=arm946e-s
+CFLAGS  = $(ARCH) -O2 -Wall -fno-strict-aliasing -ffunction-sections -fdata-sections \
+          -DPLATFORM_NDS -D__NDS__ -DARM9 -DGAME_VERSION='"$(VERSION)"' \
+          -I$(LIBNDS)/include -I$(CALICO)/include
+LDFLAGS = -specs=$(CALICO)/share/ds9.specs $(ARCH) -Wl,--gc-sections \
+          -L$(LIBNDS)/lib -L$(CALICO)/lib
+LIBS    = -lfat -lnds9 -lcalico_ds9
+
+ARM7ELF = $(CALICO)/bin/ds7_maine.elf
+# 32x32 16-colour banner icon, generated from assets/icon.jpg by the tool below.
+ICON    = assets/nds_icon.bmp
+
+all: $(ROMS)
+
+# Build the banner icon from the source artwork (32x32 16-colour BMP for ndstool).
+$(ICON): assets/icon.jpg tools/make_nds_icon.py
+	$(PYTHON) tools/make_nds_icon.py
+
+# Per-mod build: compile sources into build_nds/<mod>/ with that mod's name
+# baked in, embed its level data, link the ARM9 .elf, then wrap it in a .nds.
+define MOD_template
+$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
+            $$(BUILD_DIR)/$(1)/levels.o
+
+$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
+
+# Embed this mod's level data (same objcopy recipe as the GBA build, so the
+# symbol is always _binary_levels_mrg_start regardless of the mod name).
+$$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
+	@mkdir -p $$(dir $$@)
+	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
+	cd $$(BUILD_DIR)/$(1) && $$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
+
+$(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
+	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) $$(LIBS) -o $$@
+
+$(TARGET)_$(1)_v$(VERSION).nds: $(TARGET)_$(1)_v$(VERSION).elf $$(ICON)
+	$$(NDSTOOL) -c $$@ -9 $$< -7 $$(ARM7ELF) -b $$(ICON) "ReGravity Defied;$(1) MOD;v$(VERSION)"
+endef
+
+$(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
+
+clean:
+	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).elf $(TARGET)_$(m)_v$(VERSION).nds)
+
+.PHONY: all clean

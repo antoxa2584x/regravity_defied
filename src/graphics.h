@@ -1,8 +1,17 @@
 #ifndef GRAPHICS_H
 #define GRAPHICS_H
 
-#include "gba.h"
+#include "platform.h"
 
+// Off-screen frame back buffer (the drawing canvas). All rasteriser primitives
+// in graphics.c target this; the per-platform backend (graphics_gba.c /
+// graphics_nds.c) presents it to the display. Not present in the host harness,
+// where drawing goes straight into the test buffer.
+#ifndef HOST_BUILD
+extern color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT];
+#endif
+
+// --- Display backend (implemented per target) ------------------------------
 void clear_screen(color_t color);
 // Blit the back buffer to VRAM (call once per frame at VBlank start).
 void present_frame(void);

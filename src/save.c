@@ -1,33 +1,18 @@
 #include "save.h"
 
-// SRAM lives at 0x0E000000 and must be accessed one byte at a time.
-#define SRAM ((volatile uint8_t*)0x0E000000)
 // "RGD5": bumped from "RGD4" when the customization colors were added to
 // SaveData. A magic change clears any older save, so a struct that grew never
 // reads garbage past the previous layout. ("RGD4" added sound_on over "RGD3".)
 #define SAVE_MAGIC 0x52474435u
 
-// Emulators/flashcarts enable 32 KB SRAM when this marker is present in the ROM.
-__attribute__((used)) static const char sram_sig[] = "SRAM_V113";
-
 // Progress is ~5 KB now (1024-track flat arrays) and is only touched in menus
 // and on finish — never in the per-frame hot path — so keep it out of the
-// scarce, fast IWRAM. .ewram is NOLOAD, but save_load() fills every byte from
-// SRAM at boot before any read, so nothing depends on zero-initialization.
-__attribute__((section(".ewram"))) SaveData g_save;
-
-static void sram_read(void* dst, int n) {
-    uint8_t* d = dst;
-    for (int i = 0; i < n; i++) d[i] = SRAM[i];
-}
-
-static void sram_write(const void* src, int n) {
-    const uint8_t* s = src;
-    for (int i = 0; i < n; i++) SRAM[i] = s[i];
-}
+// scarce, fast IWRAM (EWRAM_BSS on GBA). save_load() fills every byte from
+// storage at boot before any read, so nothing depends on zero-initialization.
+EWRAM_BSS SaveData g_save;
 
 void save_load(void) {
-    sram_read(&g_save, sizeof(g_save));
+    save_backend_read(&g_save, sizeof(g_save));
     if (g_save.magic != SAVE_MAGIC) {
         // No valid save: clear everything (only league 0 / track 0 unlocked).
         uint8_t* p = (uint8_t*)&g_save;
@@ -43,7 +28,7 @@ void save_load(void) {
 
 void save_flush(void) {
     g_save.magic = SAVE_MAGIC;
-    sram_write(&g_save, sizeof(g_save));
+    save_backend_write(&g_save, sizeof(g_save));
 }
 
 void save_reset(void) {
