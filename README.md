@@ -15,7 +15,7 @@ Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), 
 ![Mode](https://img.shields.io/badge/video-240%C3%97160%20%C2%B7%20256%C3%97192-1f6feb?style=flat-square)
 ![License](https://img.shields.io/badge/license-open%20source-22C55E?style=flat-square)
 
-🔗 **[github.com/antoxa2584x/regravity_defied_gba](https://github.com/antoxa2584x/regravity_defied_gba)**
+🔗 **[github.com/antoxa2584x/regravity_defied](https://github.com/antoxa2584x/regravity_defied)**
 
 </div>
 
