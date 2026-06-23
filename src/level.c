@@ -71,6 +71,18 @@ const uint8_t* get_track_data(const uint8_t* mrg, int level_idx, int track_idx) 
     return mrg + track_offset;
 }
 
+const char* get_track_name(const uint8_t* mrg, int league, int track) {
+    const uint8_t* p = mrg;
+    for (int l = 0; l < league; l++) {
+        uint32_t count = read_be32(p);
+        p += 4;
+        for (int t = 0; t < (int)count; t++) { p += 4; while (*p++) ; }
+    }
+    const uint8_t* track_info = p + 4;          // skip this league's track count
+    for (int t = 0; t < track; t++) { track_info += 4; while (*track_info++) ; }
+    return (const char*)(track_info + 4);       // each entry: 4-byte offset, name
+}
+
 void get_track_flags(const uint8_t* data, int* start_x, int* start_y, int* finish_x, int* finish_y) {
     const uint8_t* p = data;
     if (*p != 0x33) return;
@@ -139,11 +151,20 @@ static const uint8_t* next_track_point(const uint8_t* p, int32_t* cx, int32_t* c
     return p;
 }
 
-void draw_track_preview(const uint8_t* data, int bx, int by, int bw, int bh, color_t color) {
-    if (*data != 0x33) return;
+// min_x/min_y are the track's pixel-space bounding-box origin and (off_x, off_y,
+// draw_h, scale) the box-space placement, so a world point in pixel coords maps
+// to the box via PREVIEW_MAP_X/Y below.
+#define PREVIEW_MAP_X(xf, px) ((xf).off_x + (int)(((int64_t)((px) - (xf).min_x) * (xf).scale) >> 16))
+#define PREVIEW_MAP_Y(xf, py) ((xf).off_y + (xf).draw_h - (int)(((int64_t)((py) - (xf).min_y) * (xf).scale) >> 16))
+
+// Compute the fit and draw the track polyline into box (bx,by,bw,bh) in `color`,
+// returning the transform in *xf. Returns 0 if the track data is unusable.
+static int trace_track_into_box(const uint8_t* data, int bx, int by, int bw, int bh,
+                                color_t color, TrackPreviewXform* xf) {
+    if (*data != 0x33) return 0;
     const uint8_t* hdr = data + 1 + 16;          // skip header byte + 4 thresholds
     uint16_t points_count = read_be16(hdr);
-    if (points_count < 2) return;
+    if (points_count < 2) return 0;
     const uint8_t* first = hdr + 2;
 
     // Pass 1: pixel-space bounding box of every point.
@@ -168,23 +189,55 @@ void draw_track_preview(const uint8_t* data, int bx, int by, int bw, int bh, col
     int scale = sxf < syf ? sxf : syf;
     int draw_w = (int)(((int64_t)span_x * scale) >> 16);
     int draw_h = (int)(((int64_t)span_y * scale) >> 16);
-    int off_x = bx + (bw - draw_w) / 2;
-    int off_y = by + (bh - draw_h) / 2;
+    xf->min_x = min_x; xf->min_y = min_y; xf->scale = scale; xf->draw_h = draw_h;
+    xf->off_x = bx + (bw - draw_w) / 2;
+    xf->off_y = by + (bh - draw_h) / 2;
 
     // Pass 2: project each point into the box (y flipped so higher = up) and
     // connect with line segments.
     cx = convert_coord(read_be32(first));
     cy = convert_coord(read_be32(first + 4));
     p = first + 8;
-    int prev_x = off_x + (int)(((int64_t)(get_pixel_coord(cx) - min_x) * scale) >> 16);
-    int prev_y = off_y + draw_h - (int)(((int64_t)(get_pixel_coord(cy) - min_y) * scale) >> 16);
+    int prev_x = PREVIEW_MAP_X(*xf, get_pixel_coord(cx));
+    int prev_y = PREVIEW_MAP_Y(*xf, get_pixel_coord(cy));
     for (int i = 0; i < points_count - 1; i++) {
         p = next_track_point(p, &cx, &cy);
-        int ex = off_x + (int)(((int64_t)(get_pixel_coord(cx) - min_x) * scale) >> 16);
-        int ey = off_y + draw_h - (int)(((int64_t)(get_pixel_coord(cy) - min_y) * scale) >> 16);
+        int ex = PREVIEW_MAP_X(*xf, get_pixel_coord(cx));
+        int ey = PREVIEW_MAP_Y(*xf, get_pixel_coord(cy));
         draw_line(prev_x, prev_y, ex, ey, color);
         prev_x = ex; prev_y = ey;
     }
+    return 1;
+}
+
+void track_preview_map(const TrackPreviewXform* xf, int px, int py, int* sx, int* sy) {
+    *sx = PREVIEW_MAP_X(*xf, px);
+    *sy = PREVIEW_MAP_Y(*xf, py);
+}
+
+// Start (green dot) and finish (checkered square) markers, mapped through the
+// preview transform — shared by the menu previews and the gameplay minimap.
+static void draw_preview_flag_markers(const uint8_t* data, const TrackPreviewXform* xf) {
+    int sx = 0, sy = 0, fx = 0, fy = 0, mx, my;   // y left unset by the fallback path
+    get_track_flags(data, &sx, &sy, &fx, &fy);
+    track_preview_map(xf, sx, sy, &mx, &my);
+    fill_circle(mx, my, 3, COLOR(0, 0, 0));
+    fill_circle(mx, my, 2, COLOR(0, 31, 0));
+    track_preview_map(xf, fx, fy, &mx, &my);
+    draw_rect(mx - 4, my - 4, 8, 8, COLOR(0, 0, 0));        // border
+    for (int yy = 0; yy < 3; yy++)
+        for (int xx = 0; xx < 3; xx++)
+            draw_rect(mx - 3 + xx * 2, my - 3 + yy * 2, 2, 2,
+                      ((xx + yy) & 1) ? COLOR(31, 31, 31) : COLOR(0, 0, 0));
+}
+
+int draw_track_preview_flags(const uint8_t* data, int bx, int by, int bw, int bh,
+                             color_t track_color, TrackPreviewXform* xf) {
+    TrackPreviewXform local;
+    TrackPreviewXform* x = xf ? xf : &local;
+    if (!trace_track_into_box(data, bx, by, bw, bh, track_color, x)) return 0;
+    draw_preview_flag_markers(data, x);
+    return 1;
 }
 
 // Fast magnitude approximation (matches ref GamePhysics::getSmthLikeMaxAbs):
@@ -219,6 +272,13 @@ IWRAM_FN static void project_point(int32_t ix, int32_t iy, int ox, int oy,
     *ny = sy;
     *fx = sx + ddx * RIBBON_DEPTH / m;
     *fy = sy + ddy * RIBBON_DEPTH / m;
+}
+
+void project_track_center(int32_t ix, int32_t iy, int ox, int oy, int* cx, int* cy) {
+    int nx, ny, fx, fy;
+    project_point(ix, iy, ox, oy, &nx, &ny, &fx, &fy);
+    *cx = (nx + fx) >> 1;   // midway between near (riding) and far (ribbon) edges
+    *cy = (ny + fy) >> 1;
 }
 
 IWRAM_FN static int seg_offscreen(int x1, int x2) {

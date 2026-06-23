@@ -31,6 +31,23 @@ void present_frame(void) {
     }
 }
 
+// Bottom-screen bitmap-background base, set by platform_init (sub engine, 16-bit
+// extended-rotation BG in VRAM bank C). present_sub_frame copies the sub back
+// buffer here each frame, setting the DS per-pixel opaque bit just like the main
+// present path. NULL until the sub screen is set up.
+color_t* g_sub_gfx;
+
+void present_sub_frame(void) {
+    if (!g_sub_gfx) return;
+    u32* fb = (u32*)g_sub_gfx;          // 256-px-wide bitmap BG, so same stride
+    for (int y = 0; y < SCREEN_HEIGHT; y++) {
+        const u32* src = (const u32*)(g_subbuf + y * SCREEN_WIDTH);
+        u32* dst = fb + (y * SCREEN_WIDTH) / 2;
+        for (int x = 0; x < SCREEN_WIDTH / 2; x++)
+            dst[x] = src[x] | 0x80008000u;
+    }
+}
+
 // Hardware master-brightness fades, mirroring the GBA BLDY darken effect.
 // REG_MASTER_BRIGHT: bits 0..4 = factor (0..16), bits 14..15 = mode (2 = down).
 #define BRIGHT_DOWN(f) ((2 << 14) | (f))

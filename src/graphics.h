@@ -40,4 +40,16 @@ void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
                        int fw, int fh, int frame);
 void fill_circle(int cx, int cy, int r, color_t color);
 
+#if defined(PLATFORM_NDS)
+// DS bottom (sub) screen support. The shared drawing primitives target whichever
+// screen is active; switch with gfx_target_sub()/gfx_target_main() (main is the
+// default top screen). g_subbuf is the sub back buffer; present_sub_frame copies
+// it to the bottom screen, and gfx_clear fills whichever canvas is active.
+extern color_t g_subbuf[SCREEN_WIDTH * SCREEN_HEIGHT];
+void gfx_target_main(void);
+void gfx_target_sub(void);
+void gfx_clear(color_t color);
+void present_sub_frame(void);
+#endif
+
 #endif // GRAPHICS_H

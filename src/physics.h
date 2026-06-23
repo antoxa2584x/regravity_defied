@@ -32,6 +32,15 @@ void init_bike(Bike* b, const uint8_t* track_data);
 void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys);
 void draw_bike(Bike* b, int ox, int oy);
 
+#if defined(PLATFORM_NDS)
+// Draw the bike's shadow on the track (NDS only): a terrain-following line under
+// the bike, darker the closer it is to the ground. Call before draw_bike so the
+// moto draws over it. physics_reset_shadow() clears the smoothing state (called
+// by init_bike).
+void draw_bike_shadow(Bike* b, int ox, int oy);
+void physics_reset_shadow(void);
+#endif
+
 // Select engine league before init_bike: 0=100cc, 1=175cc, 2=220cc.
 void physics_set_league(int league);
 

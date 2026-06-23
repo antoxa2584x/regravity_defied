@@ -75,10 +75,30 @@ const uint8_t font5x7[] = {
 // g_vram_buf, so draw straight into it.
 #ifdef HOST_BUILD
 extern uint16_t g_vram_buf[];
-#define G_CANVAS ((color_t*)g_vram_buf)
+static color_t* g_canvas = (color_t*)g_vram_buf;
 #else
 color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
-#define G_CANVAS g_backbuf
+#if defined(PLATFORM_NDS)
+// Second back buffer for the DS bottom (sub) screen. Every drawing primitive
+// targets whichever canvas is active (g_canvas); gfx_target_sub/main switch
+// between them and present_sub_frame (graphics_nds.c) copies this to the
+// sub-engine bitmap background. Other targets have a single screen.
+color_t g_subbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
+#endif
+static color_t* g_canvas = g_backbuf;
+#endif
+#define G_CANVAS g_canvas
+
+#if defined(PLATFORM_NDS)
+void gfx_target_main(void) { g_canvas = g_backbuf; }
+void gfx_target_sub(void)  { g_canvas = g_subbuf; }
+
+// Fill the active canvas (used to clear the bottom screen; the main-screen
+// clear_screen lives in the per-target backend and always targets g_backbuf).
+void gfx_clear(color_t color) {
+    color_t* c = g_canvas;
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) c[i] = color;
+}
 #endif
 
 void put_pixel(int x, int y, color_t color) {

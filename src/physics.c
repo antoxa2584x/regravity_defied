@@ -700,6 +700,9 @@ void init_bike(Bike* b, const uint8_t* track_data) {
         b->nodes[i].x = nodes[i].mc[index01].x >> 1;
         b->nodes[i].y = nodes[i].mc[index01].y >> 1;
     }
+#if defined(PLATFORM_NDS)
+    physics_reset_shadow();
+#endif
 }
 
 IWRAM_FN void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys) {
@@ -794,6 +797,91 @@ static void draw_body_part(int x1, int y1, int x2, int y2,
     draw_sprite_frame(px - fw / 2, py - fh / 2, sheet, sheet_w, fw, fh, frame);
 }
 
+
+#if defined(PLATFORM_NDS)
+// Bike shadow cast on the track, ported from the reference GameLevel::renderShadow:
+// a polyline tracing the track surface beneath the bike, from the front wheel to
+// the rear wheel, shaded by how high the bike is above the ground (black on the
+// ground, fading out as it lifts off). Unlike a flat drop shadow this follows the
+// terrain and conveys altitude, like the original. NDS only.
+
+// Smoothed height-above-ground (internal units), low-pass filtered frame to frame
+// like the reference's field_277 so the shadow tone doesn't flicker. Reset on
+// init_bike via physics_reset_shadow().
+static int s_shadow_h;
+void physics_reset_shadow(void) { s_shadow_h = 0; }
+
+// Above this height (≈55 px) the shadow has faded out and isn't drawn.
+#define SHADOW_MAX_H  (55 * 8192)
+
+// Segment [i, i+1] of the (X-sorted) track containing internal X `x`, clamped.
+static int shadow_seg_at(const TrackGeom* g, int x) {
+    int lo = 0, hi = g->count - 2;
+    while (lo < hi) {
+        int mid = (lo + hi + 1) >> 1;
+        if (g->px[mid] <= x) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+}
+
+// Track surface Y (internal units) at internal X `x`, linearly interpolated
+// within segment [i, i+1].
+static int shadow_track_y(const TrackGeom* g, int i, int x) {
+    int dx = g->px[i + 1] - g->px[i];
+    if (dx == 0) return g->py[i];
+    return g->py[i] + (int)((int64_t)(g->py[i + 1] - g->py[i]) * (x - g->px[i]) / dx);
+}
+
+void draw_bike_shadow(Bike* b, int ox, int oy) {
+    const TrackGeom* g = physics_get_track_geom();
+    if (g->count < 2) return;
+
+    // Footprint = the X span between the two wheels (nodes 1=front, 2=rear).
+    int xa = b->nodes[1].x, xb = b->nodes[2].x;
+    int left_x  = xa < xb ? xa : xb;
+    int right_x = xa < xb ? xb : xa;
+    int wheel_y = (b->nodes[1].y + b->nodes[2].y) >> 1;   // wheel-center height
+
+    int sl = shadow_seg_at(g, left_x);
+    int sr = shadow_seg_at(g, right_x);
+
+    // Height of the wheels above the ground line under the footprint. Internal Y
+    // increases upward, so airborne -> positive and growing.
+    int ground_y = (g->py[sl] + g->py[sr + 1]) >> 1;
+    int h = wheel_y - ground_y;
+    if (h < 0) h = 0;
+
+    // Low-pass: 3/4 previous + 1/4 current (reference 0.75/0.25 blend).
+    s_shadow_h = (s_shadow_h * 3 + h) >> 2;
+    if (s_shadow_h > SHADOW_MAX_H) return;             // too high: no shadow
+
+    // Darkness scales with height: ~black on the ground, greying out as it rises.
+    int gv = s_shadow_h * 31 / SHADOW_MAX_H;
+    if (gv > 31) gv = 31;
+    color_t col = COLOR(gv, gv, gv);
+
+    // Trace the polyline along the centre of the 3D ribbon (between the near
+    // riding edge and the far edge), from the front wheel to the rear wheel.
+    int px_, py_, nx_, ny_;
+    project_track_center(left_x, shadow_track_y(g, sl, left_x), ox, oy, &px_, &py_);
+    if (sl == sr) {
+        project_track_center(right_x, shadow_track_y(g, sr, right_x), ox, oy, &nx_, &ny_);
+        draw_line(px_, py_, nx_, ny_, col);
+        return;
+    }
+    // First partial segment, then each intermediate track point, then last.
+    project_track_center(g->px[sl + 1], g->py[sl + 1], ox, oy, &nx_, &ny_);
+    draw_line(px_, py_, nx_, ny_, col);
+    px_ = nx_; py_ = ny_;
+    for (int i = sl + 1; i < sr; i++) {
+        project_track_center(g->px[i + 1], g->py[i + 1], ox, oy, &nx_, &ny_);
+        draw_line(px_, py_, nx_, ny_, col);
+        px_ = nx_; py_ = ny_;
+    }
+    project_track_center(right_x, shadow_track_y(g, sr, right_x), ox, oy, &nx_, &ny_);
+    draw_line(px_, py_, nx_, ny_, col);
+}
+#endif  // PLATFORM_NDS
 
 void draw_bike(Bike* b, int ox, int oy) {
     int nx[6], ny[6], px[6], py[6];

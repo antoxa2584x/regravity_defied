@@ -23,6 +23,7 @@ enum State {
     STATE_CUSTOMIZE,
     STATE_TRACK_VIEW,
     STATE_GAME,
+    STATE_DEAD,       // crash hold: the wreck is shown for ~2s before respawning
     STATE_FINISHED
 };
 
@@ -187,6 +188,101 @@ static void deco_bike_launch(void) {
     deco_step = deco_rand(1, 3);
 }
 
+#if defined(PLATFORM_NDS)
+// Bottom-screen detail card for the level-select menu: the highlighted track's
+// name, best time, and a large preview of its shape — the counterpart to the
+// compact detail pane on the top screen. Targets whichever canvas is active.
+static void draw_track_detail_sub(const uint8_t* mrg, int league, int track) {
+    int base = global_track_index(mrg, league, 0);
+    int unlocked = track_unlocked(mrg, league, track);
+    uint32_t best = save_best(base + track);
+    const char* name = get_track_name(mrg, league, track);
+    int cx = SCREEN_WIDTH / 2;
+
+    // Track name, 2x scale, centered (scaled glyph width is 2x, so halving the
+    // 1x width gives the left edge).
+    draw_string_scaled(cx - str_px_width(name), 16, name, COLOR(0, 0, 0), 2);
+
+    draw_string(cx - str_px_width("BEST TIME") / 2, 44, "BEST TIME", COLOR(8, 8, 8));
+    char tb[12];
+    if (best) format_time((int)best, tb); else str_cat(tb, "--:--.--");
+    color_t tcol = best ? COLOR(0, 18, 0) : COLOR(15, 15, 15);
+    draw_string_scaled(cx - str_px_width(tb), 56, tb, tcol, 2);
+
+    // Large framed preview, centered. The inset is a light grey so the white box
+    // stays visible against the white screen.
+    const int bw = 184, bh = 84, bx = cx - bw / 2, by = 92;
+    draw_rect(bx - 2, by - 2, bw + 4, bh + 4, COLOR(14, 14, 14));
+    draw_rect(bx, by, bw, bh, COLOR(28, 28, 28));
+    color_t trace = unlocked ? COLOR(0, 18, 0) : COLOR(18, 18, 18);
+    draw_track_preview_flags(get_track_data(mrg, league, track), bx, by, bw, bh, trace, NULL);
+    if (!unlocked)
+        draw_string_centered_outlined(by + bh / 2 - 3, "LOCKED", COLOR(31, 8, 8), COLOR(31, 31, 31));
+}
+
+// Cached gameplay minimap. The track outline is static for a run, so it's traced
+// once into g_mm_clean (rebuilt only when the track changes) and the per-frame
+// work is just: copy the clean minimap back, drop the position marker, present.
+// This keeps the bottom screen cheap enough to hold 60 fps during play.
+static color_t g_mm_clean[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
+static const uint8_t* g_mm_track;        // track g_mm_clean was built for
+static TrackPreviewXform g_mm_xf;        // fit transform for the marker
+
+static void build_minimap_cache(const uint8_t* cur_track) {
+    gfx_clear(COLOR(31, 31, 31));
+    draw_string_centered(6, "MAP", COLOR(8, 8, 8));
+    const int bw = 224, bh = 156, bx = (SCREEN_WIDTH - bw) / 2, by = 22;
+    draw_rect(bx - 2, by - 2, bw + 4, bh + 4, COLOR(14, 14, 14));
+    draw_rect(bx, by, bw, bh, COLOR(27, 27, 27));
+    // Track outline + start/finish markers, baked into the cache (static for the
+    // run); g_mm_xf is kept so the live bike dot can be placed each frame.
+    draw_track_preview_flags(cur_track, bx, by, bw, bh, COLOR(0, 18, 0), &g_mm_xf);
+
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) g_mm_clean[i] = g_subbuf[i];
+    g_mm_track = cur_track;
+}
+
+static void draw_minimap_sub(const uint8_t* cur_track) {
+    if (!cur_track) { gfx_clear(COLOR(31, 31, 31)); return; }
+    if (cur_track != g_mm_track) build_minimap_cache(cur_track);
+    // Restore the clean minimap, then stamp the bike's current position.
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) g_subbuf[i] = g_mm_clean[i];
+    int mx, my;
+    track_preview_map(&g_mm_xf, get_pixel_coord(player_bike.nodes[1].x),
+                      get_pixel_coord(player_bike.nodes[1].y), &mx, &my);
+    fill_circle(mx, my, 3, COLOR(0, 0, 0));     // dark halo
+    fill_circle(mx, my, 2, COLOR(31, 0, 0));    // red position dot
+}
+
+// Compose the bottom (sub) screen for the current state, then present it. White
+// everywhere except the "Remake by" intro (kept black); the start and league
+// menus show the checkered-flag backdrop (matching the top screen) with the
+// start screen's "PRESS START" prompt centered here; the level-select menu shows
+// a track detail card; and during play it shows a minimap of progress. `chk_phase`
+// animates the checker, `blink` drives the prompt.
+static void draw_sub_screen(enum State state, const uint8_t* mrg, const uint8_t* cur_track,
+                            int level_idx, int track_idx, int chk_phase, int blink) {
+    gfx_target_sub();
+    if (state == STATE_INTRO) {
+        gfx_clear(COLOR(0, 0, 0));
+    } else if (state == STATE_GAME || state == STATE_DEAD || state == STATE_FINISHED) {
+        draw_minimap_sub(cur_track);
+    } else {
+        gfx_clear(COLOR(31, 31, 31));
+        if (state == STATE_SPLASH || state == STATE_MENU_HARDNESS) {
+            draw_checker_bg(chk_phase);
+            if (state == STATE_SPLASH && blink)
+                draw_string_centered_outlined(SCREEN_HEIGHT / 2 - 3, "PRESS START",
+                                              COLOR(0, 0, 0), COLOR(31, 31, 31));
+        } else if (state == STATE_MENU_TRACK) {
+            draw_track_detail_sub(mrg, level_idx, track_idx);
+        }
+    }
+    gfx_target_main();
+    present_sub_frame();
+}
+#endif
+
 int main() {
     // Bring up the display, the free-running game-clock timer, and any memory
     // tuning for this target (see platform_<target>.c). The timer drives the
@@ -232,6 +328,7 @@ int main() {
     int timer_started = 0;     // has the front wheel crossed the start flag this run
     int attempts = 0;          // crashes + 1 on the current track (the run count)
     int crash_flash = 0;       // frames of red hit-flash still owed after a crash
+    uint32_t crash_deadline = 0; // wall-clock tick at which the death hold ends
     int prev_state = -1;   // force a redraw on the first frame
     int prev_blink = -1;
 
@@ -445,12 +542,13 @@ int main() {
                 update_physics(&player_bike, cur_track, pk);
                 if (player_bike.crash) {
                     if (save_sound_on()) sound_play_crash();
-                    init_bike(&player_bike, cur_track);
-                    update_physics(&player_bike, cur_track, 0);
-                    timer = 0;
-                    timer_started = 0;
-                    attempts++;
-                    crash_flash = 6;   // ~0.1s red hit-flash
+                    // Hold on the wreck for 2s (see STATE_DEAD) before respawning,
+                    // rather than restarting instantly. Keep the crash pose on
+                    // screen; the respawn happens when the hold expires.
+                    crash_flash = 6;   // ~0.1s red hit-flash on impact
+                    crash_deadline = clock_ticks + 2u * CLOCK_HZ;
+                    state = STATE_DEAD;
+                    break;
                 }
                 // Timing is gated on the front wheel (node 1): it begins the
                 // frame the wheel crosses the start flag and ends when it
@@ -492,6 +590,23 @@ int main() {
             if (keys_pressed & KEY_SELECT) {
                 state = STATE_MENU_TRACK;
             }
+        } else if (state == STATE_DEAD) {
+            // Hold on the wreck for ~2s, then respawn for the next attempt.
+            // START/A skips the wait; SELECT/B bails to the track menu.
+            if (keys_pressed & (KEY_SELECT | KEY_B)) {
+                state = STATE_MENU_TRACK;
+            } else if (clock_ticks >= crash_deadline || (keys_pressed & (KEY_START | KEY_A))) {
+                init_bike(&player_bike, cur_track);
+                update_physics(&player_bike, cur_track, 0);
+                timer = 0;
+                timer_started = 0;
+                attempts++;
+                crash_flash = 0;
+                tm_accum = 0;   // don't bank the hold time into the first sim step
+                state = STATE_GAME;
+            }
+            cam_x = get_pixel_coord(player_bike.x);
+            cam_y = get_pixel_coord(player_bike.y);
         } else if (state == STATE_FINISHED) {
             if (keys_pressed & (KEY_START | KEY_A | KEY_B | KEY_SELECT)) {
                 state = STATE_MENU_TRACK;
@@ -529,8 +644,12 @@ int main() {
         // The finish modal is excluded: it should pop up instantly over the
         // frozen track rather than fading the gameplay away.
         int transition = (int)state != prev_state;
-        int do_fade = transition && prev_state >= 0 && state != STATE_FINISHED;
+        // No fade into/out of the death hold either — it pops over the frozen
+        // track like the finish modal, and the respawn shouldn't fade.
+        int do_fade = transition && prev_state >= 0 && state != STATE_FINISHED
+                   && state != STATE_DEAD && prev_state != STATE_DEAD;
         int redraw = (state == STATE_GAME)
+                   || (state == STATE_DEAD)            // animate the crash flash/message
                    || (state == STATE_MENU_HARDNESS)   // animated checker backdrop
                    || (state == STATE_SPLASH)          // animated checker + floating title
                    || transition
@@ -571,7 +690,10 @@ int main() {
                     str_cat(me, " MOD");
                     draw_string_centered_outlined(78 + fy, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
                 }
+#if !defined(PLATFORM_NDS)
+                // On the DS the prompt lives centered on the bottom screen instead.
                 if (blink) draw_string_centered_outlined(120, "PRESS START", COLOR(0, 0, 0), COLOR(31, 31, 31));
+#endif
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
                 // Wall-clock phase (16384 Hz / 819 ≈ 20 steps/s) so the flag waves
@@ -688,7 +810,9 @@ int main() {
                 // Left rail = scrolling list of names; right pane = detail card
                 // (best time + medal + status) for the highlighted track.
                 draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
+#if !defined(PLATFORM_NDS)
                 draw_line(120, 22, 120, 140, COLOR(18, 18, 18));   // rail/pane divider
+#endif
 
                 int base = global_track_index(mrg, level_idx, 0);  // first track of league
                 const uint8_t* p = mrg;
@@ -702,28 +826,43 @@ int main() {
                 }
                 uint32_t count = read_be32(p);
                 const uint8_t* track_info = p + 4;
+#if !defined(PLATFORM_NDS)
                 const char* sel_name = "";   // captured for the detail pane
+#endif
                 for (int t = 0; t < (int)count; t++) {
                     track_info += 4;
                     const char* name = (const char*)track_info;
+#if !defined(PLATFORM_NDS)
                     if (t == track_idx) sel_name = name;
+#endif
 
-                    // Window of 7 names around the cursor, left rail only.
+                    // Window of 7 names around the cursor.
                     if (t >= track_idx - 3 && t <= track_idx + 3) {
                         int unlocked = track_unlocked(mrg, level_idx, t);
                         color_t color = !unlocked ? COLOR(15, 15, 15)
                                       : (t == track_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
                         int y_pos = 32 + (t - (track_idx - 3)) * 14;
+#if defined(PLATFORM_NDS)
+                        // DS: the detail card lives on the bottom screen, so the
+                        // top screen shows just the track list, centered.
+                        int nx = (SCREEN_WIDTH - str_px_width(name)) / 2;
+                        if (t == track_idx && blink) draw_string(nx - 12, y_pos, ">", color);
+                        draw_string(nx, y_pos, name, color);
+                        if (save_completed(base + t))            // tick = cleared
+                            draw_string(nx + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
+#else
                         if (t == track_idx && blink) draw_string(6, y_pos, ">", color);
                         draw_string(16, y_pos, name, color);
                         if (save_completed(base + t))            // tick = cleared
                             draw_string(16 + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
+#endif
                     }
 
                     while (*track_info) track_info++;
                     track_info++;
                 }
 
+#if !defined(PLATFORM_NDS)
                 // ---- Detail pane (centered on x = 180) ----
                 const int pcx = 180;
                 int sel_unlocked = track_unlocked(mrg, level_idx, track_idx);
@@ -745,19 +884,29 @@ int main() {
                     draw_rect(bx - 1, by - 1, bw + 2, bh + 2, COLOR(16, 16, 16));
                     draw_rect(bx, by, bw, bh, COLOR(31, 31, 31));
                     color_t trace = sel_unlocked ? COLOR(0, 22, 0) : COLOR(18, 18, 18);
-                    draw_track_preview(get_track_data(mrg, level_idx, track_idx), bx, by, bw, bh, trace);
+                    draw_track_preview_flags(get_track_data(mrg, level_idx, track_idx), bx, by, bw, bh, trace, NULL);
                     if (!sel_unlocked) {
                         const char* lk = "LOCKED";
                         draw_string_outlined(pcx - str_px_width(lk) / 2, by + bh / 2 - 3,
                                              lk, COLOR(31, 8, 8), COLOR(31, 31, 31));
                     }
                 }
+#endif
 
                 draw_string_centered(150, "A: START   B: BACK", COLOR(10, 10, 10));
-            } else if (state == STATE_GAME || state == STATE_TRACK_VIEW || state == STATE_FINISHED) {
+            } else if (state == STATE_GAME || state == STATE_TRACK_VIEW
+                       || state == STATE_DEAD || state == STATE_FINISHED) {
                 draw_track(cur_track, cam_x, cam_y);
-                if (state == STATE_GAME || state == STATE_FINISHED) {
-                    draw_bike(&player_bike, SCREEN_WIDTH / 2 - cam_x, SCREEN_HEIGHT / 2 + cam_y);
+                if (state == STATE_GAME || state == STATE_DEAD || state == STATE_FINISHED) {
+                    int bike_ox = SCREEN_WIDTH / 2 - cam_x;
+                    int bike_oy = SCREEN_HEIGHT / 2 + cam_y;
+#if defined(PLATFORM_NDS)
+                    // Shadow on the track (NDS only): a terrain-following line
+                    // under the bike, fading as it lifts off — matching the
+                    // reference GameLevel::renderShadow. Drawn before the moto.
+                    draw_bike_shadow(&player_bike, bike_ox, bike_oy);
+#endif
+                    draw_bike(&player_bike, bike_ox, bike_oy);
                 }
                 // Flags last so one the rider is passing stays in front of the moto.
                 draw_track_flags(cur_track, cam_x, cam_y);
@@ -777,8 +926,10 @@ int main() {
                                          run_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
                 }
 
+#if !defined(PLATFORM_NDS)
                 // 10px green progress bar along the bottom: how far the front
                 // wheel has travelled from the start flag toward the finish.
+                // (On the DS this is replaced by the minimap on the second screen.)
                 if (state == STATE_GAME) {
                     int span = finish_x - start_x;
                     int front_px = get_pixel_coord(player_bike.nodes[1].x);
@@ -788,21 +939,32 @@ int main() {
                     draw_rect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 10, COLOR(3, 3, 3));
                     if (fill > 0) draw_rect(0, SCREEN_HEIGHT - 5, fill, 10, COLOR(4, 28, 4));
                 }
+#endif
 
-                // Crash hit-flash overlays the whole scene for a few frames.
-                if (state == STATE_GAME && crash_flash > 0) {
-                    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
-                    draw_string_centered_outlined(76, "CRASH!", COLOR(31, 31, 31), COLOR(0, 0, 0));
+                // Death screen: a brief red impact flash, then the wreck stays on
+                // screen with a "CRASHED" message for the 2s hold (see STATE_DEAD).
+                if (state == STATE_DEAD) {
+                    if (crash_flash > 0)
+                        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
+                    draw_string_centered_outlined(SCREEN_HEIGHT / 2 - 12, "CRASHED",
+                                                  COLOR(31, 31, 31), COLOR(0, 0, 0));
+                    draw_string_centered_outlined(SCREEN_HEIGHT / 2 + 2, "A: RETRY   B: QUIT",
+                                                  COLOR(31, 28, 0), COLOR(0, 0, 0));
                 }
 
                 if (state == STATE_FINISHED) {
-                    draw_rect(44, 48, 152, 70, COLOR(31, 31, 31));
-                    draw_rect(46, 50, 148, 66, COLOR(0, 0, 0));
-                    draw_string_centered(56, "FINISHED!", COLOR(31, 31, 31));
+                    // Centered modal (derived from the screen size so it sits in
+                    // the middle on both the GBA 240x160 and the DS 256x192).
+                    const int dw = 152, dh = 70;
+                    int dx = (SCREEN_WIDTH - dw) / 2;
+                    int dy = (SCREEN_HEIGHT - dh) / 2;
+                    draw_rect(dx, dy, dw, dh, COLOR(31, 31, 31));
+                    draw_rect(dx + 2, dy + 2, dw - 4, dh - 4, COLOR(0, 0, 0));
+                    draw_string_centered(dy + 8, "FINISHED!", COLOR(31, 31, 31));
 
                     char time_buf[10];
                     format_time(finish_time, time_buf);
-                    draw_string_centered(70, time_buf, COLOR(0, 31, 0));
+                    draw_string_centered(dy + 22, time_buf, COLOR(0, 31, 0));
 
                     // Delta vs. the previous best (omitted on a first clear).
                     if (finish_has_delta) {
@@ -810,13 +972,13 @@ int main() {
                         format_delta(finish_delta, dbuf);
                         // Faster = negative = green; slower = positive = red.
                         color_t dcol = finish_delta <= 0 ? COLOR(0, 31, 0) : COLOR(31, 8, 8);
-                        draw_string_centered(82, dbuf, dcol);
+                        draw_string_centered(dy + 34, dbuf, dcol);
                     }
 
                     if (finish_unlocked)
-                        draw_string_centered(98, "UNLOCKED NEXT!", COLOR(0, 31, 31));
+                        draw_string_centered(dy + 50, "UNLOCKED NEXT!", COLOR(0, 31, 31));
                     else if (finish_new_best)
-                        draw_string_centered(98, "NEW BEST TIME!", COLOR(31, 31, 0));
+                        draw_string_centered(dy + 50, "NEW BEST TIME!", COLOR(31, 31, 0));
                 }
             }
         }
@@ -827,6 +989,17 @@ int main() {
         // not redraw: VRAM already holds the last presented frame.
         platform_vsync();
         if (redraw) present_frame();
+#if defined(PLATFORM_NDS)
+        // Compose and present the bottom screen from the same redraw decision as
+        // the top, so it stays in step (and idle screens stay cheap).
+        // The minimap doesn't need 60 Hz; refresh the bottom screen every 3rd
+        // gameplay frame so the ARM9 budget stays with the playfield. Menus and
+        // the finish screen present on their (already gated) redraws.
+        int sub_throttled = (state == STATE_GAME || state == STATE_DEAD) && (frame % 3 != 0);
+        if (redraw && !sub_throttled)
+            draw_sub_screen(state, mrg, cur_track, level_idx, track_idx,
+                            clock_ticks / CHECKER_TICKS, blink);
+#endif
 
         // Bring the freshly drawn screen up from black. The blocking fades ate
         // real time the fixed-timestep clock must not bank, or the first game

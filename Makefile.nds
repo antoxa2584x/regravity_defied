@@ -25,7 +25,7 @@ NDSTOOL := $(DEVKITPRO)/tools/bin/ndstool
 PYTHON  ?= python3
 
 TARGET  = ReGravity_Defied
-VERSION = 0.9
+VERSION = 1.0
 
 SRC_DIR    = src
 BUILD_DIR  = build_nds
