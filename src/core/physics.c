@@ -716,7 +716,7 @@ void init_bike(Bike* b, const uint8_t* track_data) {
         b->nodes[i].x = nodes[i].mc[index01].x >> 1;
         b->nodes[i].y = nodes[i].mc[index01].y >> 1;
     }
-#if defined(DUAL_SCREEN)
+#if defined(BIKE_SHADOW)
     physics_reset_shadow();
 #endif
 }
@@ -814,7 +814,7 @@ static void draw_body_part(int x1, int y1, int x2, int y2,
 }
 
 
-#if defined(DUAL_SCREEN)
+#if defined(BIKE_SHADOW)
 // Bike shadow cast on the track, ported from the reference GameLevel::renderShadow:
 // a polyline tracing the track surface beneath the bike, from the front wheel to
 // the rear wheel, shaded by how high the bike is above the ground (black on the
@@ -897,7 +897,7 @@ void draw_bike_shadow(Bike* b, int ox, int oy) {
     project_track_center(right_x, shadow_track_y(g, sr, right_x), ox, oy, &nx_, &ny_);
     draw_line(px_, py_, nx_, ny_, col);
 }
-#endif  // DUAL_SCREEN
+#endif  // BIKE_SHADOW
 
 void draw_bike(Bike* b, int ox, int oy) {
     int nx[6], ny[6], px[6], py[6];

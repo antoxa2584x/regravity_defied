@@ -35,19 +35,24 @@ static int g_ok;                // 1 once the clip and worker thread are ready
 
 static int audio_thread(SceSize args, void* argp) {
     (void)args; (void)argp;
+
+    // Reserve the SRC channel once for the life of the program (the hardware
+    // converts our PSP_SRC_RATE clip up to its native 44.1 kHz output). Reserving
+    // per playback and releasing afterwards fails on the *second* reserve, so only
+    // the first crash ever played — keep the one channel held instead. If even the
+    // first reserve fails, give up quietly (the SFX is non-essential).
+    if (sceAudioSRCChReserve(CHUNK, PSP_SRC_RATE, 2) < 0) return 0;
+
     for (;;) {
         // Poll for a play request. A 2 ms idle poll keeps latency inaudible while
         // costing almost nothing when no crash is playing.
         while (!g_play) sceKernelDelayThread(2000);
         g_play = 0;
 
-        // Reserve the SRC channel at a PSP-supported rate (see PSP_SRC_RATE); the
-        // hardware converts it up to its native 44.1 kHz output. Skip this
-        // playthrough if the channel is unavailable.
-        if (sceAudioSRCChReserve(CHUNK, PSP_SRC_RATE, 2) < 0) continue;
+        // Stream the clip; the channel stays reserved and simply goes idle (silent)
+        // between crashes, ready for the next one.
         for (int frame = 0; frame < FRAMES; frame += CHUNK)
             sceAudioSRCOutputBlocking(PSP_AUDIO_VOLUME_MAX, g_clip + frame * 2);
-        sceAudioSRCChRelease();
     }
     return 0;
 }

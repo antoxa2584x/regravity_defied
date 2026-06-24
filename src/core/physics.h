@@ -32,11 +32,11 @@ void init_bike(Bike* b, const uint8_t* track_data);
 void update_physics(Bike* b, const uint8_t* track_data, uint16_t keys);
 void draw_bike(Bike* b, int ox, int oy);
 
-#if defined(DUAL_SCREEN)
-// Draw the bike's shadow on the track (dual-screen targets): a terrain-following
-// line under the bike, darker the closer it is to the ground. Call before
-// draw_bike so the moto draws over it. physics_reset_shadow() clears the
-// smoothing state (called by init_bike).
+#if defined(BIKE_SHADOW)
+// Draw the bike's shadow on the track (DS/3DS/PSP): a terrain-following line under
+// the bike, darker the closer it is to the ground. Call before draw_bike so the
+// moto draws over it. physics_reset_shadow() clears the smoothing state (called by
+// init_bike).
 void draw_bike_shadow(Bike* b, int ox, int oy);
 void physics_reset_shadow(void);
 #endif

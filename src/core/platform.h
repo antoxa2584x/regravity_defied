@@ -55,6 +55,14 @@
 #define DUAL_SCREEN 1
 #endif
 
+// Targets that draw the terrain-following bike shadow under the moto (see
+// draw_bike_shadow in physics.c). The dual-screen DS/3DS builds have always had
+// it; the PSP gets it too — its MIPS CPU has ample headroom for the per-frame
+// projection. The GBA (ARM7) stays without it to protect its frame budget.
+#if defined(DUAL_SCREEN) || defined(PLATFORM_PSP)
+#define BIKE_SHADOW 1
+#endif
+
 // Color: 15-bit BGR, 5 bits per channel — the format shared by the GBA Mode 3
 // bitmap and the NDS LCDC framebuffer. Bit 15 is unused here; the NDS present
 // path sets it (on DS it is the per-pixel "opaque" bit).

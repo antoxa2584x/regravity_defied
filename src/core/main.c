@@ -360,7 +360,7 @@ static void render_gameplay(enum State state, const uint8_t* cur_track,
     if (state == STATE_GAME || state == STATE_DEAD || state == STATE_FINISHED) {
         int bike_ox = SCREEN_WIDTH / 2 - cam_x;
         int bike_oy = SCREEN_HEIGHT / 2 + cam_y;
-#if defined(DUAL_SCREEN)
+#if defined(BIKE_SHADOW)
         // The shadow lives on the track surface, so it takes the track's parallax
         // (not the bike's) — in 3D the bike then visibly floats above its shadow.
         draw_bike_shadow(&player_bike, bike_ox + track_dx, bike_oy);
