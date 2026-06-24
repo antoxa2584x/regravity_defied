@@ -1,7 +1,7 @@
 #ifndef GD_SPRITES_H
 #define GD_SPRITES_H
 // Flag sprites extracted from ref/assets/sprites.png (15-bit, bit15=opaque).
-#include "gba.h"
+#include "platform.h"
 #define FLAG_W 12
 #define FLAG_H 6
 static const color_t flag_start_frames[3][72] = {

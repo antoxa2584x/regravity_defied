@@ -1,40 +1,46 @@
-# Compiler and tools
-CROSS = arm-none-eabi-
-CC = $(CROSS)gcc
+# Bare-metal Game Boy Advance build (arm-none-eabi, no SDK).
+#
+# Compiles the portable game core (src/core) + generated assets (src/generated)
+# with the GBA hardware backend (src/platform/gba) into one ROM per levels/*.mrg,
+# emitted to release/gba/. Object files live under build/gba/<mod>/.
+#
+#   make            # one ROM per levels/*.mrg  ->  release/gba/ReGravity_Defied_<mod>_v<ver>.gba
+#   make assets     # regenerate src/generated/gd_assets.h + gd_sound.h from assets/
+#   make debug      # build with mGBA debug logging (-DDEBUG)
+#   make clean      # remove build/gba and release/gba
+
+CROSS   = arm-none-eabi-
+CC      = $(CROSS)gcc
 OBJCOPY = $(CROSS)objcopy
 PYTHON ?= python3
 
-# Target name
-TARGET = ReGravity_Defied
-
-# Game version, baked in via -DGAME_VERSION and shown on the About screen.
+TARGET  = ReGravity_Defied
 VERSION = 1.0
 
-# Build directories
-SRC_DIR = src
-BUILD_DIR = build
-LEVELS_DIR = levels
+# Source layout: portable core + generated assets + the GBA platform backend.
+CORE_DIR    = src/core
+GEN_DIR     = src/generated
+PLAT_DIR    = src/platform/gba
+BUILD_DIR   = build/gba
+RELEASE_DIR = release/gba
+LEVELS_DIR  = levels
 
-# Each levels/*.mrg produces its own ROM: $(TARGET)_<name>_v<version>.gba
+INCLUDE = -I$(CORE_DIR) -I$(GEN_DIR) -I$(PLAT_DIR)
+
+# Each levels/*.mrg produces its own ROM: release/gba/$(TARGET)_<name>_v<ver>.gba
 LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
-ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).gba)
+ROMS = $(foreach m,$(MODS),$(RELEASE_DIR)/$(TARGET)_$(m)_v$(VERSION).gba)
 
-# Compiler flags
 CFLAGS = -mthumb -mthumb-interwork -mlittle-endian -mcpu=arm7tdmi \
          -mtune=arm7tdmi -fno-strict-aliasing -fno-exceptions \
-         -O3 -Wall -DGAME_VERSION='"$(VERSION)"'
+         -O3 -Wall -DGAME_VERSION='"$(VERSION)"' $(INCLUDE)
+LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T $(PLAT_DIR)/gba.ld
 
-# Linker flags
-LDFLAGS = -mthumb -mthumb-interwork -nostartfiles -T gba.ld
+# Portable core + GBA backend C sources, plus the GBA startup assembly.
+SRCS_C = $(wildcard $(CORE_DIR)/*.c) $(wildcard $(PLAT_DIR)/*.c)
+SRCS_S = $(wildcard $(PLAT_DIR)/*.s)
 
-# Source files. Portable game code + the *_gba.c hardware backends; the *_nds.c,
-# *_3ds.c and *_psp.c backends are for the native DS / 3DS / PSP builds only (see
-# Makefile.nds, Makefile.3ds and Makefile.psp).
-SRCS_C = $(filter-out %_nds.c %_3ds.c %_psp.c,$(wildcard $(SRC_DIR)/*.c))
-SRCS_S = $(wildcard $(SRC_DIR)/*.s)
-
-# Default target: build one ROM per levels/*.mrg
 all: $(ROMS)
 
 # Regenerate the committed asset headers from assets/ (needs Pillow + miniaudio).
@@ -43,21 +49,23 @@ assets:
 	$(PYTHON) tools/convert_assets.py
 	$(PYTHON) tools/convert_sound.py
 
-# Per-mod build rules. For each levels/<mod>.mrg we compile the sources into a
-# dedicated build/<mod>/ directory (so MOD_NAME differs per ROM), embed that
-# mod's level data, and link a separate $(TARGET)_<mod>_v<version>.gba ROM.
+# Per-mod build rules. Each levels/<mod>.mrg compiles into build/gba/<mod>/ (so
+# MOD_NAME differs per ROM), embeds that mod's level data, links a .elf, and
+# objcopies + fixes up a release/gba/$(TARGET)_<mod>_v<ver>.gba ROM. Object base
+# names are unique across core/ and platform/gba/, so they flatten into one dir.
 define MOD_template
-$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
-            $$(patsubst $$(SRC_DIR)/%.s, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_S)) \
+$(1)_OBJS = $$(addprefix $$(BUILD_DIR)/$(1)/, $$(notdir $$(SRCS_C:.c=.o)) $$(notdir $$(SRCS_S:.s=.o))) \
             $$(BUILD_DIR)/$(1)/levels.o
 
-# Compile C sources with this mod's name baked in for the on-screen label.
-$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+$$(BUILD_DIR)/$(1)/%.o: $$(CORE_DIR)/%.c
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
 
-# Assemble assembly sources.
-$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.s
+$$(BUILD_DIR)/$(1)/%.o: $$(PLAT_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
+
+$$(BUILD_DIR)/$(1)/%.o: $$(PLAT_DIR)/%.s
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(CFLAGS) -c $$< -o $$@
 
@@ -69,19 +77,19 @@ $$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
 	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
 	cd $$(BUILD_DIR)/$(1) && $$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
 
-$(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
+$$(BUILD_DIR)/$(1)/$(TARGET).elf: $$($(1)_OBJS)
 	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) -o $$@
 
-$(TARGET)_$(1)_v$(VERSION).gba: $(TARGET)_$(1)_v$(VERSION).elf
-	$$(OBJCOPY) -v -O binary $$< $$@
+$$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION).gba: $$(BUILD_DIR)/$(1)/$(TARGET).elf
+	@mkdir -p $$(RELEASE_DIR)
+	$$(OBJCOPY) -O binary $$< $$@
 	$$(PYTHON) gbafix.py $$@ -t "REGRAVITY" -c "RGDE" -m "00" -v $(VERSION)
 endef
 
 $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
 
-# Clean target
 clean:
-	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).elf $(TARGET)_$(m)_v$(VERSION).gba)
+	rm -rf $(BUILD_DIR) $(RELEASE_DIR)
 
 debug: CFLAGS += -DDEBUG
 debug: all

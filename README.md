@@ -59,15 +59,17 @@ sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi make
 ### 2 · Build (GBA)
 
 ```bash
-make            # one ROM per levels/*.mrg  →  ReGravity_Defied_<mod>.gba
-make assets     # regenerate src/gd_assets.h + src/gd_sound.h from assets/
+make            # one ROM per levels/*.mrg  →  release/gba/ReGravity_Defied_<mod>_v<ver>.gba
+make assets     # regenerate src/generated/gd_assets.h + gd_sound.h from assets/
 make debug      # build with mGBA debug logging (-DDEBUG)
-make clean      # remove build artifacts
+make clean      # remove build/gba and release/gba
 ```
+
+Every target writes its ROMs to `release/<platform>/` (objects go under `build/<platform>/`).
 
 ### 3 · Play (GBA)
 
-Run a `ReGravity_Defied_*.gba` in any GBA emulator (**mGBA**, VisualBoyAdvance, no$gba)
+Run a `release/gba/ReGravity_Defied_*.gba` in any GBA emulator (**mGBA**, VisualBoyAdvance, no$gba)
 or on real hardware via a flashcart. SRAM saves require an emulator/flashcart with save support.
 
 > 💡 **WSL tip:** if a Windows emulator has the ROM open, the `.gba` file is locked and
@@ -82,11 +84,11 @@ The DS build needs the **devkitPro** DS toolchain (devkitARM + libnds + calico +
 sudo dkp-pacman -S nds-dev
 export DEVKITPRO=/opt/devkitpro
 
-make -f Makefile.nds          # one .nds per levels/*.mrg  →  ReGravity_Defied_<mod>.nds
+make -f Makefile.nds          # one .nds per levels/*.mrg  →  release/nds/ReGravity_Defied_<mod>_v<ver>.nds
 make -f Makefile.nds clean
 ```
 
-Run a `ReGravity_Defied_*.nds` in a DS emulator (**melonDS**, DeSmuME) or on real
+Run a `release/nds/ReGravity_Defied_*.nds` in a DS emulator (**melonDS**, DeSmuME) or on real
 hardware — flashcart on DS/DS Lite, or directly on a homebrew-enabled **DSi/3DS** (the
 `.nds` is flagged DSi-compatible). Saves are written to the SD card as `regravity.sav`.
 
@@ -103,12 +105,12 @@ The 3DS build needs the **devkitPro** 3DS toolchain (devkitARM + libctru):
 sudo dkp-pacman -S 3ds-dev
 export DEVKITPRO=/opt/devkitpro
 
-make -f Makefile.3ds          # one .3dsx per levels/*.mrg  →  ReGravity_Defied_<mod>.3dsx
+make -f Makefile.3ds          # one .3dsx per levels/*.mrg  →  release/3ds/ReGravity_Defied_<mod>_v<ver>.3dsx
 make -f Makefile.3ds icon     # (optional) generate the HOME-menu app icon (needs Pillow)
 make -f Makefile.3ds clean
 ```
 
-Run a `ReGravity_Defied_*.3dsx` in **Citra** or on a homebrew-enabled 3DS/2DS (copy
+Run a `release/3ds/ReGravity_Defied_*.3dsx` in **Citra** or on a homebrew-enabled 3DS/2DS (copy
 to the SD card and launch from the Homebrew Launcher). Saves are written to the SD
 card root as `regravity_defied.sav`.
 
@@ -131,12 +133,14 @@ The PSP build needs the **pspdev** toolchain (psp-gcc + pspsdk + `mksfoex` + `pa
 ```bash
 # install pspdev per https://github.com/pspdev/pspdev (or `brew install pspdev`),
 # then make sure psp-config is on PATH:
-make -f Makefile.psp          # one EBOOT per levels/*.mrg  →  ReGravity_Defied_<mod>.pbp
+make -f Makefile.psp          # one game folder per levels/*.mrg, each with an EBOOT.PBP
 make -f Makefile.psp clean
 ```
 
-Run a `ReGravity_Defied_*.pbp` in the **PPSSPP** emulator, or on a homebrew-enabled
-PSP by copying it to `ms0:/PSP/GAME/<folder>/EBOOT.PBP` on the Memory Stick. The PSP
+Each mod is emitted as a ready-to-run game folder,
+`release/psp/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP`. Run an `EBOOT.PBP` in the
+**PPSSPP** emulator, or on a homebrew-enabled PSP by copying the whole game folder to
+`ms0:/PSP/GAME/` on the Memory Stick — it then appears in the PSP's Game menu. The PSP
 has a single screen, so it uses the GBA single-screen layout, rendered at the LCD's
 native **480×272**. Cross accelerates, Circle/Square brake, the D-pad or analog stick
 lean/steer, and the shoulder triggers are L/R. Saves are written to the Memory Stick
@@ -164,58 +168,51 @@ at `ms0:/PSP/SAVEDATA/regravity_defied.sav`.
 
 ## 🗂️ Project Structure
 
-Portable game code shares a small **platform layer** (`platform.h`); each target
-swaps in its own hardware backends — `*_gba.c` for the GBA, `*_nds.c` for the DS,
-`*_3ds.c` for the 3DS, `*_psp.c` for the PSP.
+The source tree is split by responsibility: a portable **core**, the **generated**
+asset headers, and one **platform** backend folder per target. The core talks to
+each backend only through the small interface in `core/platform.h`, so adding a
+target is a new `platform/<name>/` folder plus a Makefile.
 
 ```
 src/
-├── main.c          game loop, state machine, menus, progression   (portable)
-├── physics.c       bike physics + rider rendering                 (portable)
-├── graphics.c      drawing primitives + back buffer                (portable)
-├── level.c         track decoding and rendering                   (portable)
-├── save.c          save logic (progress, best times, cursor)      (portable)
+├── core/                    portable game code + the platform interface (built for every target)
+│   ├── main.c               game loop, state machine, menus, progression
+│   ├── physics.c/.h         bike physics + rider rendering
+│   ├── graphics.c/.h        drawing primitives + back buffer
+│   ├── level.c/.h           track decoding and rendering
+│   ├── save.c/.h            save logic (progress, best times, cursor)
+│   ├── platform.h           color/keys/timing + platform_init/keys/timer/vsync interface
+│   └── sound.h              SFX interface
 │
-├── platform.h      color/keys/timing + platform_init/keys/timer/vsync interface
-├── gba.h           GBA hardware register map (includes platform.h)
+├── generated/               committed, tool-generated (do not hand-edit)
+│   ├── gd_assets.h           sprites/images  (tools/convert_assets.py)
+│   ├── gd_sound.h            crash SFX PCM   (tools/convert_sound.py)
+│   └── gd_sprites.h          flag sprites
 │
-├── platform_gba.c  GBA: display mode, free-running timer, key read
-├── graphics_gba.c  GBA: DMA back-buffer→VRAM blit + hardware fades
-├── sound_gba.c     GBA: DirectSound FIFO SFX playback
-├── save_gba.c      GBA: battery-backed SRAM
-├── crt0.s          GBA: bare-metal startup
-│
-├── platform_nds.c  DS: LCDC framebuffer, DS timer, libnds key read
-├── graphics_nds.c  DS: full-screen back-buffer→VRAM blit + brightness fades
-├── sound_nds.c     DS: libnds soundPlaySample SFX
-├── save_nds.c      DS: SD-card save file via libfat
-│
-├── platform_3ds.c  3DS: libctru gfx init, stereo 3D, system-tick timer, key + Circle Pad read
-├── graphics_3ds.c  3DS: BGR555→RGB565 rotated present (per-eye stereo) + software fades
-├── sound_3ds.c     3DS: libctru ndsp SFX
-├── save_3ds.c      3DS: SD-card save file via stdio
-│
-├── platform_psp.c  PSP: module header, exit callback, display setup, sceCtrl key + analog read
-├── graphics_psp.c  PSP: 480×272 back-buffer→VRAM present (512 stride, 5551) + software fades
-├── sound_psp.c     PSP: sceAudio SRC playback on a worker thread
-└── save_psp.c      PSP: Memory Stick save file via stdio
-gba.ld              GBA linker script
+└── platform/                one hardware backend per target (platform_/graphics_/sound_/save_)
+    ├── gba/   …_gba.c + gba.h (register map) + crt0.s (startup) + gba.ld (linker script)
+    ├── nds/   …_nds.c         LCDC framebuffer · libnds sound · libfat SD save
+    ├── 3ds/   …_3ds.c         libctru gfx + stereo 3D · ndsp sound · stdio SD save
+    └── psp/   …_psp.c         GU 480×272 present · sceAudio SFX · Memory Stick save
+
 Makefile  GBA  ·  Makefile.nds  DS/DSi  ·  Makefile.3ds  3DS/2DS  ·  Makefile.psp  PSP
-assets/             source PNGs + sound/ + icon.jpg; tools/*.py bake them into headers / the DS & 3DS icons
-levels/*.mrg        track-data mod packs — one ROM is built per file
+build/<platform>/      intermediate objects        release/<platform>/   final ROMs
+assets/                source PNGs + sound/ + icon.jpg; tools/*.py bake them into src/generated/ + the DS/3DS icons
+levels/*.mrg           track-data mod packs — one ROM is built per file
 ```
 
 ---
 
 ## 🛠️ How the Mod Build Works
 
-Each `levels/<name>.mrg` is compiled into its own `build/<name>/` directory with
+Each `levels/<name>.mrg` is compiled into its own `build/gba/<name>/` directory with
 `MOD_NAME` baked in, embedded via `objcopy`, and linked into a standalone
-`ReGravity_Defied_<name>.gba`. The mod name shows up on the league screen, so you
-can ship a `classic` ROM, a `1000`-track ROM, or your own pack side by side.
+`release/gba/ReGravity_Defied_<name>_v<ver>.gba`. The mod name shows up on the league
+screen, so you can ship a `classic` ROM, a `1000`-track ROM, or your own pack side by side.
 
-`Makefile.nds`, `Makefile.3ds` and `Makefile.psp` mirror this exactly for the DS,
-3DS and PSP, producing one `.nds` / `.3dsx` / `.pbp` per mod.
+`Makefile.nds`, `Makefile.3ds` and `Makefile.psp` mirror this exactly for the DS, 3DS
+and PSP, producing one `.nds` / `.3dsx` / game-folder `EBOOT.PBP` per mod under
+`release/<platform>/`.
 
 ---
 

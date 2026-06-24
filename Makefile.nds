@@ -1,11 +1,10 @@
 # Native Nintendo DS / DSi build (devkitARM + libnds + calico + libfat).
 #
-# This is the DS counterpart to the bare-metal GBA Makefile. It compiles the
-# same portable game code (graphics.c, level.c, physics.c, main.c, save.c) and
-# swaps the GBA hardware backends (*_gba.c) for the DS ones (*_nds.c), then
-# packages an ARM9 .elf with calico's prebuilt ARM7 core into a .nds via ndstool.
+# Compiles the portable game core (src/core) + generated assets (src/generated)
+# with the DS hardware backend (src/platform/nds) into one .nds per levels/*.mrg,
+# emitted to release/nds/. Object files live under build/nds/<mod>/.
 #
-#   make -f Makefile.nds          # build one .nds per levels/*.mrg
+#   make -f Makefile.nds          # release/nds/ReGravity_Defied_<mod>_v<ver>.nds
 #   make -f Makefile.nds clean
 #
 # Requires the devkitPro DS toolchain (pacman group nds-dev) and DEVKITPRO set.
@@ -27,25 +26,30 @@ PYTHON  ?= python3
 TARGET  = ReGravity_Defied
 VERSION = 1.0
 
-SRC_DIR    = src
-BUILD_DIR  = build_nds
-LEVELS_DIR = levels
+# Source layout: portable core + generated assets + the DS platform backend.
+CORE_DIR    = src/core
+GEN_DIR     = src/generated
+PLAT_DIR    = src/platform/nds
+BUILD_DIR   = build/nds
+RELEASE_DIR = release/nds
+LEVELS_DIR  = levels
 
-# One .nds per levels/*.mrg, mirroring the GBA build's per-mod ROMs.
+INCLUDE = -I$(CORE_DIR) -I$(GEN_DIR) -I$(PLAT_DIR)
+
+# One .nds per levels/*.mrg in release/nds/, mirroring the GBA build's per-mod ROMs.
 LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
-ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).nds)
+ROMS = $(foreach m,$(MODS),$(RELEASE_DIR)/$(TARGET)_$(m)_v$(VERSION).nds)
 
-# Portable game code + the DS hardware backends (exclude the GBA *_gba.c, 3DS
-# *_3ds.c and PSP *_psp.c ones).
-SRCS_C = $(filter-out %_gba.c %_3ds.c %_psp.c,$(wildcard $(SRC_DIR)/*.c))
+# Portable core + DS backend C sources.
+SRCS_C = $(wildcard $(CORE_DIR)/*.c) $(wildcard $(PLAT_DIR)/*.c)
 
 # ARM9 (DS main CPU): ARMv5TE. -DPLATFORM_NDS selects the DS code paths in the
 # shared headers; __NDS__/ARM9 are what libnds expects.
 ARCH    = -mthumb -mthumb-interwork -march=armv5te -mtune=arm946e-s
 CFLAGS  = $(ARCH) -O2 -Wall -fno-strict-aliasing -ffunction-sections -fdata-sections \
           -DPLATFORM_NDS -D__NDS__ -DARM9 -DGAME_VERSION='"$(VERSION)"' \
-          -I$(LIBNDS)/include -I$(CALICO)/include
+          $(INCLUDE) -I$(LIBNDS)/include -I$(CALICO)/include
 LDFLAGS = -specs=$(CALICO)/share/ds9.specs $(ARCH) -Wl,--gc-sections \
           -L$(LIBNDS)/lib -L$(CALICO)/lib
 LIBS    = -lfat -lnds9 -lcalico_ds9
@@ -60,13 +64,18 @@ all: $(ROMS)
 $(ICON): assets/icon.jpg tools/make_nds_icon.py
 	$(PYTHON) tools/make_nds_icon.py
 
-# Per-mod build: compile sources into build_nds/<mod>/ with that mod's name
-# baked in, embed its level data, link the ARM9 .elf, then wrap it in a .nds.
+# Per-mod build: compile into build/nds/<mod>/ with that mod's name baked in, embed
+# its level data, link the ARM9 .elf, then wrap it in a release/nds/*.nds. Object
+# base names are unique across core/ and platform/nds/, so they flatten into one dir.
 define MOD_template
-$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
+$(1)_OBJS = $$(addprefix $$(BUILD_DIR)/$(1)/, $$(notdir $$(SRCS_C:.c=.o))) \
             $$(BUILD_DIR)/$(1)/levels.o
 
-$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+$$(BUILD_DIR)/$(1)/%.o: $$(CORE_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
+
+$$(BUILD_DIR)/$(1)/%.o: $$(PLAT_DIR)/%.c
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
 
@@ -77,16 +86,17 @@ $$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
 	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
 	cd $$(BUILD_DIR)/$(1) && $$(OBJCOPY) -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
 
-$(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
+$$(BUILD_DIR)/$(1)/$(TARGET).elf: $$($(1)_OBJS)
 	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) $$(LIBS) -o $$@
 
-$(TARGET)_$(1)_v$(VERSION).nds: $(TARGET)_$(1)_v$(VERSION).elf $$(ICON)
+$$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION).nds: $$(BUILD_DIR)/$(1)/$(TARGET).elf $$(ICON)
+	@mkdir -p $$(RELEASE_DIR)
 	$$(NDSTOOL) -c $$@ -9 $$< -7 $$(ARM7ELF) -b $$(ICON) "ReGravity Defied;$(1) MOD;v$(VERSION)"
 endef
 
 $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
 
 clean:
-	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).elf $(TARGET)_$(m)_v$(VERSION).nds)
+	rm -rf $(BUILD_DIR) $(RELEASE_DIR)
 
 .PHONY: all clean

@@ -1,20 +1,20 @@
 # Native Sony PlayStation Portable (PSP) build (pspdev / pspsdk).
 #
-# This is the PSP counterpart to the GBA, DS and 3DS Makefiles. It compiles the
-# same portable game code (graphics.c, level.c, physics.c, main.c, save.c) and
-# swaps the hardware backends for the PSP ones (*_psp.c), then links a static
-# MIPS Allegrex .elf and packs it into a homebrew EBOOT.PBP with pack-pbp.
+# Compiles the portable game core (src/core) + generated assets (src/generated)
+# with the PSP hardware backend (src/platform/psp) into one EBOOT per levels/*.mrg.
+# Each EBOOT is emitted in its own game folder ready for the Memory Stick:
+#   release/psp/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP
+# Copy that folder to ms0:/PSP/GAME/ and it appears in the PSP's Game menu.
+# Object files live under build/psp/<mod>/.
 #
-#   make -f Makefile.psp          # build one EBOOT per levels/*.mrg
+#   make -f Makefile.psp          # release/psp/<game>/EBOOT.PBP per levels/*.mrg
 #   make -f Makefile.psp clean
 #
 # Requires the pspdev toolchain (psp-gcc + pspsdk + mksfoex + pack-pbp) on PATH.
-# Install it from https://github.com/pspdev/pspdev (or `brew install pspdev`).
-# Run each EBOOT by copying it to ms0:/PSP/GAME/<folder>/EBOOT.PBP on the Memory
-# Stick (or open it directly in the PPSSPP emulator).
+# Install from https://github.com/pspdev/pspdev (or `brew install pspdev`).
+# Run an EBOOT in the PPSSPP emulator, or on a homebrew-enabled PSP from the
+# Memory Stick game folder above.
 
-# Locate the SDK via the toolchain's own config tool; fail early with the install
-# hint rather than a confusing missing-header error.
 PSPSDK := $(shell psp-config --pspsdk-path 2>/dev/null)
 PSPDIR := $(shell psp-config --psp-prefix 2>/dev/null)
 ifeq ($(PSPSDK),)
@@ -31,36 +31,35 @@ PACKPBP := pack-pbp
 TARGET  = ReGravity_Defied
 VERSION = 1.0
 
-SRC_DIR    = src
-BUILD_DIR  = build_psp
-LEVELS_DIR = levels
+# Source layout: portable core + generated assets + the PSP platform backend.
+CORE_DIR    = src/core
+GEN_DIR     = src/generated
+PLAT_DIR    = src/platform/psp
+BUILD_DIR   = build/psp
+RELEASE_DIR = release/psp
+LEVELS_DIR  = levels
 
-# One EBOOT per levels/*.mrg, mirroring the GBA/DS/3DS builds' per-mod ROMs.
+INCLUDE = -I$(CORE_DIR) -I$(GEN_DIR) -I$(PLAT_DIR)
+
+# One game folder per levels/*.mrg, each holding an EBOOT.PBP (the PSP/GAME layout).
 LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
-ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).pbp)
+ROMS = $(foreach m,$(MODS),$(RELEASE_DIR)/$(TARGET)_$(m)_v$(VERSION)/EBOOT.PBP)
 
-# Portable game code + the PSP hardware backends (exclude the GBA/DS/3DS ones).
-SRCS_C = $(filter-out %_gba.c %_nds.c %_3ds.c,$(wildcard $(SRC_DIR)/*.c))
+# Portable core + PSP backend C sources.
+SRCS_C = $(wildcard $(CORE_DIR)/*.c) $(wildcard $(PLAT_DIR)/*.c)
 
 # MIPS Allegrex. -G0 is required (the PSP ABI keeps no $gp small-data area);
 # -DPLATFORM_PSP selects the PSP code paths in the shared headers. -MMD -MP emit
-# per-object header-dependency files so a header edit (e.g. SCREEN_WIDTH in
-# platform.h) recompiles every dependent unit. Note: no --gc-sections here — it
-# discards the pspsdk stub libraries' NID import sections (referenced only by the
-# stub mechanism, not ordinary symbol refs), which makes psp-fixup-imports fail
-# with "no nid section found". The canonical pspsdk build.mak omits it too.
-# Include and library search order mirror pspsdk's build.mak (the general
-# $(PSPDIR) tree before the SDK tree) and _PSP_FW_VERSION; without the psp/lib
-# search path the linker lays the import stubs out in an order psp-fixup-imports
-# rejects ("stubs out of order").
+# per-object header-dependency files (pulled in below). The include/lib search
+# order and _PSP_FW_VERSION mirror pspsdk's build.mak.
 CFLAGS  = -G0 -O2 -Wall -fno-strict-aliasing -MMD -MP \
           -DPLATFORM_PSP -DGAME_VERSION='"$(VERSION)"' -D_PSP_FW_VERSION=600 \
-          -I$(PSPDIR)/include -I$(PSPSDK)/include
+          $(INCLUDE) -I$(PSPDIR)/include -I$(PSPSDK)/include
 LDFLAGS = -G0 -L$(PSPDIR)/lib -L$(PSPSDK)/lib -Wl,-zmax-page-size=128
-# Only the extra stub libs this game needs; psp-gcc's default specs already link
-# pspuser/pspkernel/libc, so listing them again duplicates and reorders the import
-# stubs (psp-fixup-imports then warns "stubs out of order"). -lpspgu+ge present the
+# Only the extra stub libs this game needs; psp-gcc's specs already link
+# pspuser/pspkernel/libc (listing them again reorders the import stubs and
+# psp-fixup-imports then warns "stubs out of order"). -lpspgu+ge present the
 # frame, -lpspctrl reads buttons, -lpspdisplay paces vblank, -lpspaudio plays SFX.
 LIBS    = -lpspgu -lpspaudio -lpspdebug -lpspdisplay -lpspge -lpspctrl
 
@@ -69,14 +68,19 @@ APP_TITLE = ReGravity Defied
 
 all: $(ROMS)
 
-# Per-mod build: compile sources into build_psp/<mod>/ with that mod's name baked
-# in, embed its level data, link the .elf, fix up its stub imports, then pack a
-# stripped copy into an EBOOT.PBP.
+# Per-mod build: compile into build/psp/<mod>/ with that mod's name baked in, embed
+# its level data, link + fix up the .elf, then pack a stripped copy into an
+# EBOOT.PBP inside its own game folder. Object base names are unique across core/
+# and platform/psp/, so they flatten into one dir.
 define MOD_template
-$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
+$(1)_OBJS = $$(addprefix $$(BUILD_DIR)/$(1)/, $$(notdir $$(SRCS_C:.c=.o))) \
             $$(BUILD_DIR)/$(1)/levels.o
 
-$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+$$(BUILD_DIR)/$(1)/%.o: $$(CORE_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
+
+$$(BUILD_DIR)/$(1)/%.o: $$(PLAT_DIR)/%.c
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
 
@@ -92,9 +96,10 @@ $$(BUILD_DIR)/$(1)/$(TARGET).elf: $$($(1)_OBJS)
 	$$(CC) $$(LDFLAGS) $$($(1)_OBJS) $$(LIBS) -o $$@
 	$$(FIXUP) $$@
 
-# Strip a copy, generate PARAM.SFO, then pack the EBOOT. pack-pbp's slots are:
-# param.sfo icon0 icon1 pic0 pic1 snd0 data(elf) psar — all optional ones NULL.
-$(TARGET)_$(1)_v$(VERSION).pbp: $$(BUILD_DIR)/$(1)/$(TARGET).elf
+# Strip a copy, generate PARAM.SFO, then pack EBOOT.PBP into the game folder.
+# pack-pbp's slots are: param.sfo icon0 icon1 pic0 pic1 snd0 data(elf) psar.
+$$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION)/EBOOT.PBP: $$(BUILD_DIR)/$(1)/$(TARGET).elf
+	@mkdir -p $$(dir $$@)
 	$$(STRIP) $$< -o $$(BUILD_DIR)/$(1)/strip.elf
 	$$(MKSFO) -d MEMSIZE=1 "$(APP_TITLE) ($(1))" $$(BUILD_DIR)/$(1)/PARAM.SFO
 	$$(PACKPBP) $$@ $$(BUILD_DIR)/$(1)/PARAM.SFO NULL NULL NULL NULL NULL $$(BUILD_DIR)/$(1)/strip.elf NULL
@@ -106,6 +111,6 @@ $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
 -include $(wildcard $(BUILD_DIR)/*/*.d)
 
 clean:
-	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).pbp)
+	rm -rf $(BUILD_DIR) $(RELEASE_DIR)
 
 .PHONY: all clean

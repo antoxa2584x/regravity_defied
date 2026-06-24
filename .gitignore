@@ -1,14 +1,13 @@
 /.junie/
 /.idea/
 /ref/
+# Intermediate objects (build/<platform>/<mod>/) and final ROMs (release/<platform>/).
 /build/
-/build_nds/
-/build_3ds/
-/build_psp/
+/release/
 /.ai/
 /regravity_defied.elf
 /regravity_defied.sav
-# Per-mod build outputs (one ROM per levels/*.mrg)
+# Legacy stray outputs from before per-platform release/ folders (harmless if absent).
 /ReGravity_Defied_*.gba
 /ReGravity_Defied_*.nds
 /ReGravity_Defied_*.3dsx

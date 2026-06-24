@@ -25,7 +25,7 @@ SAMPLE_RATE = 16384  # Hz; timer reload = 65536 - (16777216 / SAMPLE_RATE) = 645
 # briefly drops well below 60fps. Must stay a multiple of 16.
 GUARD_SAMPLES = 2048
 ASSETS = os.path.join(os.path.dirname(__file__), "..", "assets", "sound")
-OUT = os.path.join(os.path.dirname(__file__), "..", "src", "gd_sound.h")
+OUT = os.path.join(os.path.dirname(__file__), "..", "src", "generated", "gd_sound.h")
 
 
 def decode_pcm8(path):
