@@ -133,17 +133,18 @@ The PSP build needs the **pspdev** toolchain (psp-gcc + pspsdk + `mksfoex` + `pa
 ```bash
 # install pspdev per https://github.com/pspdev/pspdev (or `brew install pspdev`),
 # then make sure psp-config is on PATH:
-make -f Makefile.psp          # one game folder per levels/*.mrg, each with an EBOOT.PBP
+make -f Makefile.psp          # per levels/*.mrg: a game folder + a .zip of it
 make -f Makefile.psp icon     # (optional) regenerate the 144×80 Game-menu icon (needs Pillow)
 make -f Makefile.psp clean
 ```
 
 Each mod is emitted as a ready-to-run game folder,
 `release/psp/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP`, with a 144×80 `ICON0.PNG`
-(generated from `assets/icon.jpg`) so the entry shows artwork in the Game menu. Run an
-`EBOOT.PBP` in the **PPSSPP** emulator, or on a homebrew-enabled PSP by copying the
-whole game folder to `ms0:/PSP/GAME/` on the Memory Stick — it then appears in the
-PSP's Game menu. The PSP has a single screen, so it uses the GBA single-screen layout
+(generated from `assets/icon.jpg`) so the entry shows artwork in the Game menu —
+plus a same-named **`.zip`** of that folder (`ReGravity_Defied_<mod>_v<ver>.zip`,
+containing `<game>/EBOOT.PBP`) for distribution. Run an `EBOOT.PBP` in the **PPSSPP**
+emulator, or install it on a homebrew-enabled PSP (see [Install](#-install-on-hardware)).
+The PSP has a single screen, so it uses the GBA single-screen layout
 (with the **interface drawn at 2× and reflowed** for the larger panel), rendered at the
 LCD's native **480×272**. Cross accelerates, Circle/Square brake, the D-pad or analog
 stick lean/steer, and the shoulder triggers are L/R — and the on-screen prompts show
@@ -153,6 +154,38 @@ the PSP's **✗ / ◯ glyphs** instead of A/B. Saves are written to the Memory S
 > 🆕 The PSP target is new: it builds against pspsdk and packages a valid
 > `EBOOT.PBP`, but hasn't yet been verified on hardware/emulator. The GBA build
 > remains the primary, battle-tested target.
+
+---
+
+## 📥 Install on hardware
+
+Each build lands in `release/<platform>/`. Pick your mod's ROM and follow the steps
+for your device. All targets run in an emulator too (see each build section above).
+
+### Game Boy Advance — `release/gba/*.gba`
+1. Copy the `.gba` onto a GBA flashcart's SD/CF card (EZ-Flash, EverDrive-GBA, …).
+2. Launch it from the cart's menu.
+3. **Saves** need a flashcart with SRAM save support; progress is stored in the ROM's battery SRAM.
+
+### Nintendo DS / DSi — `release/nds/*.nds`
+- **DS / DS Lite:** copy the `.nds` to a DS flashcart (R4, etc.) and launch from its menu.
+- **DSi / 3DS (homebrew):** the `.nds` is DSi-flagged — run it from the SD card via [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu) or nds-bootstrap.
+- **Saves** are written to the SD card as `regravity.sav`.
+
+### Nintendo 3DS / 2DS — `release/3ds/*.3dsx`
+1. On a homebrew-enabled console, copy the `.3dsx` to the SD card's `/3ds/` folder.
+2. Launch it from the **Homebrew Launcher**.
+3. **Saves** are written to the SD card root as `regravity_defied.sav`.
+
+### Sony PSP — `release/psp/*.zip`
+1. On a CFW / homebrew-enabled PSP, **extract the `.zip` into `ms0:/PSP/GAME/`** on the
+   Memory Stick (it already contains a `ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP` folder,
+   so it lands at `ms0:/PSP/GAME/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP`).
+2. The entry appears in the PSP's **Game** menu with its icon; launch it there.
+3. **Saves** are written to `ms0:/PSP/SAVEDATA/regravity_defied.sav`.
+
+> Equivalently, copy the unzipped `release/psp/ReGravity_Defied_<mod>_v<ver>/` folder
+> directly into `ms0:/PSP/GAME/` — the `.zip` is just that folder, packaged.
 
 ---
 

@@ -42,10 +42,13 @@ LEVELS_DIR  = levels
 
 INCLUDE = -I$(CORE_DIR) -I$(GEN_DIR) -I$(PLAT_DIR)
 
-# One game folder per levels/*.mrg, each holding an EBOOT.PBP (the PSP/GAME layout).
+# One game folder per levels/*.mrg, each holding an EBOOT.PBP (the PSP/GAME
+# layout), plus a same-named .zip of that folder for distribution — unzip it
+# straight into ms0:/PSP/GAME/ on the Memory Stick.
 LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
-ROMS = $(foreach m,$(MODS),$(RELEASE_DIR)/$(TARGET)_$(m)_v$(VERSION)/EBOOT.PBP)
+ROMS = $(foreach m,$(MODS),$(RELEASE_DIR)/$(TARGET)_$(m)_v$(VERSION).zip)
+ZIP  ?= zip
 
 # Portable core + PSP backend C sources.
 SRCS_C = $(wildcard $(CORE_DIR)/*.c) $(wildcard $(PLAT_DIR)/*.c)
@@ -120,6 +123,13 @@ $$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION)/EBOOT.PBP: $$(BUILD_DIR)/$(1)/$(TARGE
 	@ICON0=NULL; [ -f "$(ICON)" ] && ICON0="$(ICON)"; \
 	 echo "$$(PACKPBP) $$@ (icon0=$$$$ICON0)"; \
 	 $$(PACKPBP) $$@ $$(BUILD_DIR)/$(1)/PARAM.SFO $$$$ICON0 NULL NULL NULL NULL $$(BUILD_DIR)/$(1)/strip.elf NULL
+
+# Distribution archive: zip the game folder so it contains
+# ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP — unzip straight into ms0:/PSP/GAME/.
+# Zip from inside release/psp so the archive holds the folder, not the full path.
+$$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION).zip: $$(RELEASE_DIR)/$(TARGET)_$(1)_v$(VERSION)/EBOOT.PBP
+	cd $$(RELEASE_DIR) && rm -f $(TARGET)_$(1)_v$(VERSION).zip && \
+	  $$(ZIP) -r -q $(TARGET)_$(1)_v$(VERSION).zip $(TARGET)_$(1)_v$(VERSION)/
 endef
 
 $(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
