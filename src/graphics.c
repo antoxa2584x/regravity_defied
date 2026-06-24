@@ -77,7 +77,9 @@ const uint8_t font5x7[] = {
 extern uint16_t g_vram_buf[];
 static color_t* g_canvas = (color_t*)g_vram_buf;
 #else
-color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
+// 16-byte aligned: the PSP GE reads this as a texture each present and wants its
+// texture base aligned; harmless (and DMA-friendly) on the other targets.
+color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS __attribute__((aligned(16)));
 #if defined(DUAL_SCREEN)
 // Second back buffer for the bottom (sub) screen on dual-screen targets (DS and
 // 3DS). Every drawing primitive targets whichever canvas is active (g_canvas);

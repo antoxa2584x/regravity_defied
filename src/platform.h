@@ -28,9 +28,17 @@
 #ifdef SCREEN_HEIGHT
 #undef SCREEN_HEIGHT
 #endif
+// On the PSP we render at the LCD's full 480x272 so the playfield fills the wide
+// screen 1:1 (no scaling, no letterbox) — the same screen-independent world code
+// just projects a wider/taller view, exactly as on the DS/3DS. The PSP has a
+// single screen, so it is NOT a DUAL_SCREEN target and reuses the GBA's
+// single-screen layout (detail card / minimap on the playfield).
 #if defined(PLATFORM_3DS)
 #define SCREEN_WIDTH 400
 #define SCREEN_HEIGHT 240
+#elif defined(PLATFORM_PSP)
+#define SCREEN_WIDTH 480
+#define SCREEN_HEIGHT 272
 #elif defined(PLATFORM_NDS)
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 192
@@ -94,6 +102,15 @@ static inline uint16_t read_be16(const uint8_t* p) {
   // The RTC millisecond clock (osGetTime) is scaled up to the game clock in
   // platform_3ds.c; keep the rate a clean power of two for the timing derivations
   // below (TICKS_PER_STEP = 32768/60 etc.).
+  #define CLOCK_HZ 32768
+#elif defined(PLATFORM_PSP)
+  // MIPS Allegrex with caches: plain main RAM is fast enough, so the GBA's
+  // on-chip-RAM section attributes are no-ops (those sections don't exist here).
+  #define IWRAM_FN
+  #define EWRAM_BSS
+  // The microsecond system clock (sceKernelGetSystemTimeWide) is scaled down to
+  // the game clock in platform_psp.c; keep the rate a clean power of two for the
+  // timing derivations below.
   #define CLOCK_HZ 32768
 #elif defined(PLATFORM_NDS)
   #define IWRAM_FN
@@ -159,7 +176,7 @@ void present_frame_top(int eye);
 
 // --- mGBA debug logging (GBA + -DDEBUG only) -------------------------------
 // Output appears in mGBA's log as [GBA:DEBUG] lines. No-op on NDS/host.
-#if defined(DEBUG) && !defined(HOST_BUILD) && !defined(PLATFORM_NDS) && !defined(PLATFORM_3DS)
+#if defined(DEBUG) && !defined(HOST_BUILD) && !defined(PLATFORM_NDS) && !defined(PLATFORM_3DS) && !defined(PLATFORM_PSP)
 #define MGBA_DEBUG_STR  ((volatile char*)0x04FFF600)
 #define MGBA_DEBUG_OUT  (*(volatile uint16_t*)0x04FFF700)
 #define MGBA_DEBUG_INIT (*(volatile uint16_t*)0x04FFF780)

@@ -80,6 +80,16 @@ static int  deco_lane;  // screen y baseline for the current pass
 static int  deco_step;  // horizontal speed, px per frame
 static uint32_t deco_rng = 0x2545F491u;
 
+// Horizontal offset that centres the fixed-coordinate menu layouts (the track
+// list/detail pane, customize and confirm-reset screens) on single-screen targets
+// wider than the GBA. Those layouts were authored for the GBA's 240px screen and
+// already fill it edge to edge, so shifting them by half the extra width re-centres
+// the whole block. 0 on the GBA (SCREEN_WIDTH == 240); 120 on the PSP (480). The
+// dual-screen targets (DS/3DS) don't use these paths. The screens built from
+// draw_string_centered/draw_menu_row already centre on SCREEN_WIDTH and need no
+// offset.
+#define MENU_OX ((SCREEN_WIDTH - 240) / 2)
+
 // Pixel width of a string in the 5x7 font (6px advance per glyph).
 static int str_px_width(const char* s) {
     int n = 0;
@@ -931,18 +941,18 @@ int main() {
                     int y = 92 + i * 16;
                     int ci = cust_color[i];
                     color_t tc = (cust_cursor == i) ? COLOR(0, 31, 0) : COLOR(10, 10, 10);
-                    if (cust_cursor == i && blink) draw_string(26, y, ">", tc);
-                    draw_string(38, y, cust_part_name[i], tc);
-                    draw_string(110, y, cust_name[ci], tc);
+                    if (cust_cursor == i && blink) draw_string(26 + MENU_OX, y, ">", tc);
+                    draw_string(38 + MENU_OX, y, cust_part_name[i], tc);
+                    draw_string(110 + MENU_OX, y, cust_name[ci], tc);
                     // Outlined swatch of the selected color.
-                    draw_rect(186, y - 1, 22, 9, COLOR(0, 0, 0));
-                    draw_rect(187, y, 20, 7, cust_swatch[ci]);
+                    draw_rect(186 + MENU_OX, y - 1, 22, 9, COLOR(0, 0, 0));
+                    draw_rect(187 + MENU_OX, y, 20, 7, cust_swatch[ci]);
                 }
 
                 draw_string_centered(146, "L/R: COLOR  U/D: PART  B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_CONFIRM_RESET) {
-                draw_rect(40, 55, 160, 50, COLOR(31, 31, 31));
-                draw_rect(42, 57, 156, 46, COLOR(0, 0, 0));
+                draw_rect(40 + MENU_OX, 55, 160, 50, COLOR(31, 31, 31));
+                draw_rect(42 + MENU_OX, 57, 156, 46, COLOR(0, 0, 0));
                 draw_string_centered(64, "ERASE ALL PROGRESS", COLOR(31, 31, 31));
                 draw_string_centered(76, "AND BEST TIMES?", COLOR(31, 31, 31));
                 draw_string_centered(92, "A: YES    B: NO", COLOR(31, 31, 0));
@@ -951,7 +961,7 @@ int main() {
                 // (best time + medal + status) for the highlighted track.
                 draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
 #if !defined(DUAL_SCREEN)
-                draw_line(120, 22, 120, 140, COLOR(18, 18, 18));   // rail/pane divider
+                draw_line(120 + MENU_OX, 22, 120 + MENU_OX, 140, COLOR(18, 18, 18));   // rail/pane divider
 #endif
 
                 int base = global_track_index(mrg, level_idx, 0);  // first track of league
@@ -991,10 +1001,10 @@ int main() {
                         if (save_completed(base + t))            // tick = cleared
                             draw_string(nx + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
 #else
-                        if (t == track_idx && blink) draw_string(6, y_pos, ">", color);
-                        draw_string(16, y_pos, name, color);
+                        if (t == track_idx && blink) draw_string(6 + MENU_OX, y_pos, ">", color);
+                        draw_string(16 + MENU_OX, y_pos, name, color);
                         if (save_completed(base + t))            // tick = cleared
-                            draw_string(16 + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
+                            draw_string(16 + MENU_OX + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
 #endif
                     }
 
@@ -1003,8 +1013,8 @@ int main() {
                 }
 
 #if !defined(DUAL_SCREEN)
-                // ---- Detail pane (centered on x = 180) ----
-                const int pcx = 180;
+                // ---- Detail pane (centered on x = 180 in the GBA layout) ----
+                const int pcx = 180 + MENU_OX;
                 int sel_unlocked = track_unlocked(mrg, level_idx, track_idx);
                 uint32_t sel_best = save_best(base + track_idx);
 

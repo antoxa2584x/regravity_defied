@@ -36,9 +36,9 @@ LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
 ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).nds)
 
-# Portable game code + the DS hardware backends (exclude the GBA *_gba.c and
-# 3DS *_3ds.c ones).
-SRCS_C = $(filter-out %_gba.c %_3ds.c,$(wildcard $(SRC_DIR)/*.c))
+# Portable game code + the DS hardware backends (exclude the GBA *_gba.c, 3DS
+# *_3ds.c and PSP *_psp.c ones).
+SRCS_C = $(filter-out %_gba.c %_3ds.c %_psp.c,$(wildcard $(SRC_DIR)/*.c))
 
 # ARM9 (DS main CPU): ARMv5TE. -DPLATFORM_NDS selects the DS code paths in the
 # shared headers; __NDS__/ARM9 are what libnds expects.

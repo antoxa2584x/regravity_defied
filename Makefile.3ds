@@ -47,8 +47,8 @@ LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
 MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
 ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).3dsx)
 
-# Portable game code + the 3DS hardware backends (exclude the GBA/DS backends).
-SRCS_C = $(filter-out %_gba.c %_nds.c,$(wildcard $(SRC_DIR)/*.c))
+# Portable game code + the 3DS hardware backends (exclude the GBA/DS/PSP backends).
+SRCS_C = $(filter-out %_gba.c %_nds.c %_psp.c,$(wildcard $(SRC_DIR)/*.c))
 
 # ARM11 (3DS main CPU): ARMv6K, hard-float, like the rest of the devkitPro 3DS
 # toolchain. -DPLATFORM_3DS selects the 3DS code paths in the shared headers.

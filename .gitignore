@@ -4,6 +4,7 @@
 /build/
 /build_nds/
 /build_3ds/
+/build_psp/
 /.ai/
 /regravity_defied.elf
 /regravity_defied.sav
@@ -11,6 +12,7 @@
 /ReGravity_Defied_*.gba
 /ReGravity_Defied_*.nds
 /ReGravity_Defied_*.3dsx
+/ReGravity_Defied_*.pbp
 /ReGravity_Defied_*.elf
 /ReGravity_Defied_*.sav
 # Generated 3DS app icon (run `make -f Makefile.3ds icon` to regenerate)
