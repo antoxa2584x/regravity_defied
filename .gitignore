@@ -14,8 +14,9 @@
 /ReGravity_Defied_*.pbp
 /ReGravity_Defied_*.elf
 /ReGravity_Defied_*.sav
-# Generated 3DS app icon (run `make -f Makefile.3ds icon` to regenerate)
+# Generated app icons (run `make -f Makefile.<plat> icon` to regenerate)
 /assets/icon_3ds.png
+/assets/icon_psp.png
 # ndstool/calico link map dumps
 /*.lst
 /levels/1000.mrg

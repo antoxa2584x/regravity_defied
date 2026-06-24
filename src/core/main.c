@@ -80,45 +80,71 @@ static int  deco_lane;  // screen y baseline for the current pass
 static int  deco_step;  // horizontal speed, px per frame
 static uint32_t deco_rng = 0x2545F491u;
 
-// Horizontal offset that centres the fixed-coordinate menu layouts (the track
-// list/detail pane, customize and confirm-reset screens) on single-screen targets
-// wider than the GBA. Those layouts were authored for the GBA's 240px screen and
-// already fill it edge to edge, so shifting them by half the extra width re-centres
-// the whole block. 0 on the GBA (SCREEN_WIDTH == 240); 120 on the PSP (480). The
-// dual-screen targets (DS/3DS) don't use these paths. The screens built from
-// draw_string_centered/draw_menu_row already centre on SCREEN_WIDTH and need no
-// offset.
-#define MENU_OX ((SCREEN_WIDTH - 240) / 2)
+// --- PSP interface scaling ---------------------------------------------------
+// The menus were authored for the GBA's 240x160 screen. On the PSP's larger
+// 480x272 LCD that reads tiny, so the PSP enlarges the interface: menu text is
+// drawn at 2x (gfx_set_ui_scale(UI_SCALE) around menu rendering) and the
+// fixed-coordinate layouts are remapped from the 240x160 design space into the
+// PSP screen — HX() scales horizontal positions/sizes, VY() vertical ones. On
+// every other target UI_SCALE is 1 and HX/VY are identity, so nothing changes.
+// Screens built from the centered helpers below need no HX (they re-centre on
+// SCREEN_WIDTH and account for the text scale themselves); only their y's are VY'd.
+#if defined(PLATFORM_PSP)
+#define UI_SCALE 2
+#define HX(v) ((v) * 2)        // 240px design width -> fills 480
+#define VY(v) ((v) * 8 / 5)    // 160px design height -> ~256 of the 272 tall LCD
+#else
+#define UI_SCALE 1
+#define HX(v) (v)
+#define VY(v) (v)
+#endif
 
-// Pixel width of a string in the 5x7 font (6px advance per glyph).
+// Face-button labels. The PSP has no A/B buttons, so its UI shows the Cross and
+// Circle glyphs (the sentinel chars rendered by draw_char) that the input backend
+// maps to the game's A (accelerate/confirm) and B (brake/back). See platform_psp.c.
+#if defined(PLATFORM_PSP)
+#define BTN_A "\x01"   // Cross
+#define BTN_B "\x02"   // Circle
+#else
+#define BTN_A "A"
+#define BTN_B "B"
+#endif
+
+// Pixel width of a string in the 5x7 font (6px advance per glyph) at 1x. Callers
+// that center scaled text multiply by gfx_ui_scale() (see the helpers below).
 static int str_px_width(const char* s) {
     int n = 0;
     while (s[n]) n++;
     return n * 6;
 }
 
+// Rendered pixel width of a string at the current UI text scale.
+static int str_px_width_ui(const char* s) {
+    return str_px_width(s) * gfx_ui_scale();
+}
+
 // Draw a string horizontally centered on the screen.
 static void draw_string_centered(int y, const char* s, color_t color) {
-    draw_string((SCREEN_WIDTH - str_px_width(s)) / 2, y, s, color);
+    draw_string((SCREEN_WIDTH - str_px_width_ui(s)) / 2, y, s, color);
 }
 
 // Centered, outlined — used where text sits over the track or a bright panel.
 static void draw_string_centered_outlined(int y, const char* s, color_t fg, color_t outline) {
-    draw_string_outlined((SCREEN_WIDTH - str_px_width(s)) / 2, y, s, fg, outline);
+    draw_string_outlined((SCREEN_WIDTH - str_px_width_ui(s)) / 2, y, s, fg, outline);
 }
 
 // Centered menu row with a blinking selection cursor to its left.
 static void draw_menu_row(int y, const char* s, color_t color, int selected, int blink) {
-    int x = (SCREEN_WIDTH - str_px_width(s)) / 2;
+    int x = (SCREEN_WIDTH - str_px_width_ui(s)) / 2;
     draw_string(x, y, s, color);
-    if (selected && blink) draw_string(x - 12, y, ">", color);
+    if (selected && blink) draw_string(x - 12 * gfx_ui_scale(), y, ">", color);
 }
 
 // As draw_menu_row, but with a 1px outline (used over the animated backdrop).
 static void draw_menu_row_outlined(int y, const char* s, color_t color, color_t outline, int selected, int blink) {
-    int x = (SCREEN_WIDTH - str_px_width(s)) / 2;
+    int x = (SCREEN_WIDTH - str_px_width_ui(s)) / 2;
     draw_string_outlined(x, y, s, color, outline);
-    if (selected && blink) draw_string_outlined(x - 12, y, ">", color, outline);
+    if (selected && blink) draw_string_outlined(x - 12 * gfx_ui_scale(), y, ">", color, outline);
 }
 
 // Minimal string builders (no libc): append text / a non-negative int.
@@ -383,7 +409,7 @@ static void render_gameplay(enum State state, const uint8_t* cur_track,
             draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
         draw_string_centered_outlined(SCREEN_HEIGHT / 2 - 12, "CRASHED",
                                       COLOR(31, 31, 31), COLOR(0, 0, 0));
-        draw_string_centered_outlined(SCREEN_HEIGHT / 2 + 2, "A: RETRY   B: QUIT",
+        draw_string_centered_outlined(SCREEN_HEIGHT / 2 + 2, BTN_A ": RETRY   " BTN_B ": QUIT",
                                       COLOR(31, 28, 0), COLOR(0, 0, 0));
     }
 
@@ -815,8 +841,12 @@ int main() {
 #endif
             clear_screen(state == STATE_INTRO ? COLOR(0, 0, 0) : COLOR(31, 31, 31));
 
+            // Enlarge the interface on the PSP (no-op elsewhere); the gameplay
+            // branch drops back to 1x so the in-game HUD stays compact.
+            gfx_set_ui_scale(UI_SCALE);
+
             if (state == STATE_INTRO) {
-                draw_string_centered(76, "Remake by rgaming.com.ua", COLOR(0, 31, 0));
+                draw_string_centered(VY(76), "Remake by rgaming.com.ua", COLOR(0, 31, 0));
             } else if (state == STATE_SPLASH) {
                 // Animated checkered-flag backdrop, matching the league select.
                 draw_checker_bg(clock_ticks / CHECKER_TICKS);
@@ -832,17 +862,17 @@ int main() {
                 // green, the rest black, 2x scale, white outline for legibility.
                 int fy = float_offset(clock_ticks);
                 int title_x = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
-                draw_string_scaled_outlined(title_x, 56 + fy, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
-                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 56 + fy, TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x, VY(56) + fy, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, VY(56) + fy, TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
                 if (MOD_NAME[0]) {
                     char mbuf[24];
                     char* me = str_cat(mbuf, MOD_NAME);
                     str_cat(me, " MOD");
-                    draw_string_centered_outlined(78 + fy, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
+                    draw_string_centered_outlined(VY(78) + fy, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
                 }
 #if !defined(DUAL_SCREEN)
                 // On dual-screen targets the prompt lives centered on the bottom screen instead.
-                if (blink) draw_string_centered_outlined(120, "PRESS START", COLOR(0, 0, 0), COLOR(31, 31, 31));
+                if (blink) draw_string_centered_outlined(VY(120), "PRESS START", COLOR(0, 0, 0), COLOR(31, 31, 31));
 #endif
             } else if (state == STATE_MENU_HARDNESS) {
                 static const char* league_names[3] = { "100cc", "175cc", "220cc" };
@@ -852,14 +882,14 @@ int main() {
                 // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
                 // White 1px outline keeps it readable over the checkered backdrop.
                 int title_x = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
-                draw_string_scaled_outlined(title_x, 18, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
-                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x, VY(18), "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, VY(18), TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
                 // Mod label ("<mrg name> MOD") under the title, from the embedded levels file.
                 if (MOD_NAME[0]) {
                     char mbuf[24];
                     char* me = str_cat(mbuf, MOD_NAME);
                     str_cat(me, " MOD");
-                    draw_string_centered_outlined(38, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
+                    draw_string_centered_outlined(VY(38), mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
                 }
                 for (int i = 0; i < NUM_LEAGUES; i++) {
                     int unlocked = league_unlocked(mrg, i);
@@ -878,56 +908,56 @@ int main() {
                     }
                     color_t color = !unlocked ? COLOR(15, 15, 15)
                                   : (i == level_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                    int row_y = 60 + i * 20;
+                    int row_y = VY(60 + i * 20);
                     draw_menu_row_outlined(row_y, buf, color, COLOR(31, 31, 31), i == level_idx, blink);
                     // Re-stamp the LOCKED word in red over the grey row.
                     if (!unlocked) {
-                        int row_x = (SCREEN_WIDTH - str_px_width(buf)) / 2;
-                        draw_string_outlined(row_x + str_px_width(league_names[i]) + 12, row_y,
+                        int row_x = (SCREEN_WIDTH - str_px_width_ui(buf)) / 2;
+                        draw_string_outlined(row_x + (str_px_width(league_names[i]) + 12) * gfx_ui_scale(), row_y,
                                              "LOCKED", COLOR(31, 8, 8), COLOR(31, 31, 31));
                     }
                 }
-                draw_string_centered_outlined(140, "SELECT: SETTINGS", COLOR(10, 10, 10), COLOR(31, 31, 31));
+                draw_string_centered_outlined(VY(140), "SELECT: SETTINGS", COLOR(10, 10, 10), COLOR(31, 31, 31));
             } else if (state == STATE_SETTINGS) {
-                draw_string_centered(20, "SETTINGS", COLOR(0, 0, 0));
+                draw_string_centered(VY(20), "SETTINGS", COLOR(0, 0, 0));
 
                 char tbuf[28];
                 char* e = str_cat(tbuf, "TILT: ");
                 str_cat(e, tilt_mode == TILT_DPAD ? "D-PAD" : "L/R SHOULDERS");
                 color_t tcol = (settings_cursor == SET_TILT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(50, tbuf, tcol, settings_cursor == SET_TILT, blink);
+                draw_menu_row(VY(50), tbuf, tcol, settings_cursor == SET_TILT, blink);
 
                 char sbuf[16];
                 char* se = str_cat(sbuf, "SOUND: ");
                 str_cat(se, save_sound_on() ? "ON" : "OFF");
                 color_t scol = (settings_cursor == SET_SOUND) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(66, sbuf, scol, settings_cursor == SET_SOUND, blink);
+                draw_menu_row(VY(66), sbuf, scol, settings_cursor == SET_SOUND, blink);
 
                 color_t ccol = (settings_cursor == SET_CUSTOMIZE) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(82, "CUSTOMIZE", ccol, settings_cursor == SET_CUSTOMIZE, blink);
+                draw_menu_row(VY(82), "CUSTOMIZE", ccol, settings_cursor == SET_CUSTOMIZE, blink);
 
                 color_t rcol = (settings_cursor == SET_RESET) ? COLOR(31, 0, 0) : COLOR(15, 8, 8);
-                draw_menu_row(98, "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
+                draw_menu_row(VY(98), "RESET PROGRESS", rcol, settings_cursor == SET_RESET, blink);
 
                 color_t acol = (settings_cursor == SET_ABOUT) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                draw_menu_row(114, "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
+                draw_menu_row(VY(114), "ABOUT", acol, settings_cursor == SET_ABOUT, blink);
 
-                draw_string_centered(134, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
-                draw_string_centered(146, "B: BACK", COLOR(10, 10, 10));
+                draw_string_centered(VY(134), BTN_A ": SELECT   UP/DOWN", COLOR(10, 10, 10));
+                draw_string_centered(VY(146), BTN_B ": BACK", COLOR(10, 10, 10));
             } else if (state == STATE_ABOUT) {
                 int tx = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
-                draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
-                draw_string_scaled(tx + str_px_width("Re") * 2, 14, TITLE_TAIL, COLOR(0, 0, 0), 2);
-                draw_string_centered(32, "VERSION " GAME_VERSION, COLOR(0, 22, 0));
-                draw_string_centered(44, "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
-                draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
-                draw_string_centered(86, "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
-                draw_string_centered(98, "/REGRAVITY_DEFIED_GBA", COLOR(0, 22, 0));
+                draw_string_scaled(tx, VY(14), "Re", COLOR(0, 31, 0), 2);
+                draw_string_scaled(tx + str_px_width("Re") * 2, VY(14), TITLE_TAIL, COLOR(0, 0, 0), 2);
+                draw_string_centered(VY(32), "VERSION " GAME_VERSION, COLOR(0, 22, 0));
+                draw_string_centered(VY(44), "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
+                draw_string_centered(VY(56), "GRAVITY DEFIED", COLOR(0, 0, 0));
+                draw_string_centered(VY(86), "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
+                draw_string_centered(VY(98), "/REGRAVITY_DEFIED_GBA", COLOR(0, 22, 0));
                 if (cheat_done)
-                    draw_string_centered(120, "ALL LEVELS UNLOCKED!", COLOR(0, 31, 0));
-                draw_string_centered(140, "B: BACK", COLOR(10, 10, 10));
+                    draw_string_centered(VY(120), "ALL LEVELS UNLOCKED!", COLOR(0, 31, 0));
+                draw_string_centered(VY(140), BTN_B ": BACK", COLOR(10, 10, 10));
             } else if (state == STATE_CUSTOMIZE) {
-                draw_string_centered(12, "CUSTOMIZE", COLOR(0, 0, 0));
+                draw_string_centered(VY(12), "CUSTOMIZE", COLOR(0, 0, 0));
 
                 // Live preview: the neutral splash bike, centered, drawn in the
                 // colors currently selected (cust_apply has pushed them already).
@@ -935,33 +965,33 @@ int main() {
                 // frame node's own pixel coords to land it at (cx, cy).
                 int bx0 = get_pixel_coord(deco_bike.nodes[0].x);
                 int by0 = get_pixel_coord(deco_bike.nodes[0].y);
-                draw_bike(&deco_bike, SCREEN_WIDTH / 2 - bx0, 60 + by0);
+                draw_bike(&deco_bike, SCREEN_WIDTH / 2 - bx0, VY(60) + by0);
 
                 for (int i = 0; i < CUST_COUNT; i++) {
-                    int y = 92 + i * 16;
+                    int y = VY(92 + i * 16);
                     int ci = cust_color[i];
                     color_t tc = (cust_cursor == i) ? COLOR(0, 31, 0) : COLOR(10, 10, 10);
-                    if (cust_cursor == i && blink) draw_string(26 + MENU_OX, y, ">", tc);
-                    draw_string(38 + MENU_OX, y, cust_part_name[i], tc);
-                    draw_string(110 + MENU_OX, y, cust_name[ci], tc);
+                    if (cust_cursor == i && blink) draw_string(HX(26), y, ">", tc);
+                    draw_string(HX(38), y, cust_part_name[i], tc);
+                    draw_string(HX(110), y, cust_name[ci], tc);
                     // Outlined swatch of the selected color.
-                    draw_rect(186 + MENU_OX, y - 1, 22, 9, COLOR(0, 0, 0));
-                    draw_rect(187 + MENU_OX, y, 20, 7, cust_swatch[ci]);
+                    draw_rect(HX(186), y - 1, HX(22), VY(9), COLOR(0, 0, 0));
+                    draw_rect(HX(187), y, HX(20), VY(7), cust_swatch[ci]);
                 }
 
-                draw_string_centered(146, "L/R: COLOR  U/D: PART  B: BACK", COLOR(10, 10, 10));
+                draw_string_centered(VY(146), "L/R: COLOR  U/D: PART  " BTN_B ": BACK", COLOR(10, 10, 10));
             } else if (state == STATE_CONFIRM_RESET) {
-                draw_rect(40 + MENU_OX, 55, 160, 50, COLOR(31, 31, 31));
-                draw_rect(42 + MENU_OX, 57, 156, 46, COLOR(0, 0, 0));
-                draw_string_centered(64, "ERASE ALL PROGRESS", COLOR(31, 31, 31));
-                draw_string_centered(76, "AND BEST TIMES?", COLOR(31, 31, 31));
-                draw_string_centered(92, "A: YES    B: NO", COLOR(31, 31, 0));
+                draw_rect(HX(40), VY(55), HX(160), VY(50), COLOR(31, 31, 31));
+                draw_rect(HX(42), VY(57), HX(156), VY(46), COLOR(0, 0, 0));
+                draw_string_centered(VY(64), "ERASE ALL PROGRESS", COLOR(31, 31, 31));
+                draw_string_centered(VY(76), "AND BEST TIMES?", COLOR(31, 31, 31));
+                draw_string_centered(VY(92), BTN_A ": YES    " BTN_B ": NO", COLOR(31, 31, 0));
             } else if (state == STATE_MENU_TRACK) {
                 // Left rail = scrolling list of names; right pane = detail card
                 // (best time + medal + status) for the highlighted track.
-                draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
+                draw_string_centered(VY(8), "SELECT TRACK", COLOR(0, 0, 0));
 #if !defined(DUAL_SCREEN)
-                draw_line(120 + MENU_OX, 22, 120 + MENU_OX, 140, COLOR(18, 18, 18));   // rail/pane divider
+                draw_line(HX(120), VY(22), HX(120), VY(140), COLOR(18, 18, 18));   // rail/pane divider
 #endif
 
                 int base = global_track_index(mrg, level_idx, 0);  // first track of league
@@ -991,7 +1021,7 @@ int main() {
                         int unlocked = track_unlocked(mrg, level_idx, t);
                         color_t color = !unlocked ? COLOR(15, 15, 15)
                                       : (t == track_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
-                        int y_pos = 32 + (t - (track_idx - 3)) * 14;
+                        int y_pos = VY(32 + (t - (track_idx - 3)) * 14);
 #if defined(DUAL_SCREEN)
                         // Dual-screen: the detail card lives on the bottom screen,
                         // so the top screen shows just the track list, centered.
@@ -1001,10 +1031,10 @@ int main() {
                         if (save_completed(base + t))            // tick = cleared
                             draw_string(nx + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
 #else
-                        if (t == track_idx && blink) draw_string(6 + MENU_OX, y_pos, ">", color);
-                        draw_string(16 + MENU_OX, y_pos, name, color);
+                        if (t == track_idx && blink) draw_string(HX(6), y_pos, ">", color);
+                        draw_string(HX(16), y_pos, name, color);
                         if (save_completed(base + t))            // tick = cleared
-                            draw_string(16 + MENU_OX + str_px_width(name) + 4, y_pos, "*", COLOR(0, 28, 0));
+                            draw_string(HX(16) + str_px_width_ui(name) + 4 * gfx_ui_scale(), y_pos, "*", COLOR(0, 28, 0));
 #endif
                     }
 
@@ -1014,38 +1044,39 @@ int main() {
 
 #if !defined(DUAL_SCREEN)
                 // ---- Detail pane (centered on x = 180 in the GBA layout) ----
-                const int pcx = 180 + MENU_OX;
+                const int pcx = HX(180);
                 int sel_unlocked = track_unlocked(mrg, level_idx, track_idx);
                 uint32_t sel_best = save_best(base + track_idx);
 
-                draw_string(pcx - str_px_width(sel_name) / 2, 30, sel_name, COLOR(0, 0, 0));
-                draw_string(pcx - str_px_width("BEST") / 2, 48, "BEST", COLOR(12, 12, 12));
+                draw_string(pcx - str_px_width_ui(sel_name) / 2, VY(30), sel_name, COLOR(0, 0, 0));
+                draw_string(pcx - str_px_width_ui("BEST") / 2, VY(48), "BEST", COLOR(12, 12, 12));
 
                 char tb[10];
                 if (sel_best) format_time(sel_best, tb); else str_cat(tb, "--:--.--");
                 color_t tcol = sel_best ? COLOR(0, 24, 0) : COLOR(14, 14, 14);
-                draw_string(pcx - str_px_width(tb) / 2, 60, tb, tcol);
+                draw_string(pcx - str_px_width_ui(tb) / 2, VY(60), tb, tcol);
 
                 {
                     // Scaled silhouette of the whole track in a framed box.
                     // Locked tracks still show their shape, but greyed out with a
                     // LOCKED label over it instead of the usual green trace.
-                    const int bw = 92, bh = 46, bx = pcx - bw / 2, by = 76;
+                    const int bw = HX(92), bh = VY(46), bx = pcx - bw / 2, by = VY(76);
                     draw_rect(bx - 1, by - 1, bw + 2, bh + 2, COLOR(16, 16, 16));
                     draw_rect(bx, by, bw, bh, COLOR(31, 31, 31));
                     color_t trace = sel_unlocked ? COLOR(0, 22, 0) : COLOR(18, 18, 18);
                     draw_track_preview_flags(get_track_data(mrg, level_idx, track_idx), bx, by, bw, bh, trace, NULL);
                     if (!sel_unlocked) {
                         const char* lk = "LOCKED";
-                        draw_string_outlined(pcx - str_px_width(lk) / 2, by + bh / 2 - 3,
+                        draw_string_outlined(pcx - str_px_width_ui(lk) / 2, by + bh / 2 - 3,
                                              lk, COLOR(31, 8, 8), COLOR(31, 31, 31));
                     }
                 }
 #endif
 
-                draw_string_centered(150, "A: START   B: BACK", COLOR(10, 10, 10));
+                draw_string_centered(VY(150), BTN_A ": START   " BTN_B ": BACK", COLOR(10, 10, 10));
             } else if (state == STATE_GAME || state == STATE_TRACK_VIEW
                        || state == STATE_DEAD || state == STATE_FINISHED) {
+                gfx_set_ui_scale(1);   // in-game HUD draws at native size
                 PlayHud hud = { timer, attempts, start_x, finish_x, crash_flash,
                                 finish_time, finish_has_delta, finish_delta,
                                 finish_unlocked, finish_new_best };

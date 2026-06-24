@@ -68,6 +68,13 @@ const uint8_t font5x7[] = {
     0x40, 0x40, 0x40, 0x40, 0x40, // _  (underscore, for the repo URL)
 };
 
+// Extra glyphs for the PSP face buttons, addressed by the sentinel codes \x01
+// (Cross) and \x02 (Circle) rather than an ASCII letter, so platform UI text can
+// show the PSP's buttons in place of the GBA's A/B (see BTN_A/BTN_B in main.c).
+// Same 5x7 column-bitmap format as font5x7. Cross reads as an X, Circle as an O.
+static const uint8_t glyph_cross[5]  = { 0x22, 0x14, 0x08, 0x14, 0x22 };
+static const uint8_t glyph_circle[5] = { 0x1C, 0x22, 0x22, 0x22, 0x1C };
+
 // Off-screen back buffer: all drawing targets this, and the platform backend's
 // present_frame() copies it to the display during VBlank. Single-buffered video
 // has no page flip, so without this the renderer races the beam and the last
@@ -99,6 +106,15 @@ static color_t* g_canvas = g_backbuf;
 // every text helper funnels through.
 static int g_text_dx;
 void gfx_set_text_parallax(int dx) { g_text_dx = dx; }
+
+// Global integer magnification for the 1x text path (draw_char / draw_string and
+// the helpers built on them). 1 everywhere by default; the PSP raises it to 2
+// while drawing menus so the interface reads at a comfortable size on the 480x272
+// LCD, then drops back to 1 for the in-game HUD. draw_string_scaled is unaffected
+// (it takes an explicit scale, e.g. the menu titles).
+static int g_ui_scale = 1;
+void gfx_set_ui_scale(int s) { g_ui_scale = (s < 1) ? 1 : s; }
+int  gfx_ui_scale(void) { return g_ui_scale; }
 
 #if defined(DUAL_SCREEN)
 void gfx_target_main(void) { g_canvas = g_backbuf; }
@@ -152,28 +168,40 @@ IWRAM_FN void draw_rect(int x, int y, int w, int h, color_t color) {
 // Direct canvas writes (no per-pixel put_pixel call) so per-frame menu text is
 // cheap; the unsigned compares fold each clip test into one branch.
 IWRAM_FN void draw_char(int x, int y, char c, color_t color) {
-    if (c >= 'a' && c <= 'z') c -= 32;
-    if (c < 32 || c > 95) return;
-    const uint8_t* g = &font5x7[(c - 32) * 5];
+    const uint8_t* g;
+    if ((unsigned char)c == 1) {        // sentinel: PSP Cross button
+        g = glyph_cross;
+    } else if ((unsigned char)c == 2) { // sentinel: PSP Circle button
+        g = glyph_circle;
+    } else {
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c < 32 || c > 95) return;
+        g = &font5x7[(c - 32) * 5];
+    }
+    int s = g_ui_scale;
     color_t* canvas = G_CANVAS;
     for (int col = 0; col < 5; col++) {
         uint8_t bits = g[col];
-        int px = x + col + g_text_dx;
-        if ((unsigned)px >= SCREEN_WIDTH) continue;
+        int bx = x + col * s + g_text_dx;
         for (int row = 0; bits; row++, bits >>= 1) {
-            if (bits & 1) {
-                int py = y + row;
-                if ((unsigned)py < SCREEN_HEIGHT)
-                    canvas[py * SCREEN_WIDTH + px] = color;
+            if (!(bits & 1)) continue;
+            int by = y + row * s;
+            for (int dy = 0; dy < s; dy++) {
+                int py = by + dy;
+                if ((unsigned)py >= SCREEN_HEIGHT) continue;
+                color_t* p = canvas + py * SCREEN_WIDTH;
+                for (int dx = 0; dx < s; dx++)
+                    if ((unsigned)(bx + dx) < SCREEN_WIDTH) p[bx + dx] = color;
             }
         }
     }
 }
 
 IWRAM_FN void draw_string(int x, int y, const char* str, color_t color) {
+    int adv = 6 * g_ui_scale;
     while (*str) {
         draw_char(x, y, *str++, color);
-        x += 6;
+        x += adv;
     }
 }
 

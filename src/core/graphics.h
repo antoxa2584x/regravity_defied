@@ -37,6 +37,12 @@ void draw_string_scaled_outlined(int x, int y, const char* str, color_t fg, colo
 // top screen; left at 0 (the default) on every other target, so text draws where
 // asked. Affects draw_char/draw_string(/_outlined) and draw_string_scaled(/_outlined).
 void gfx_set_text_parallax(int dx);
+// Global integer magnification for the 1x text path (draw_char/draw_string and the
+// centered/menu-row helpers). 1 by default; the PSP raises it to 2 around menu
+// rendering for a larger interface, then restores 1 for the in-game HUD.
+// draw_string_scaled is unaffected (it takes its own explicit scale).
+void gfx_set_ui_scale(int s);
+int  gfx_ui_scale(void);
 void draw_line(int x1, int y1, int x2, int y2, color_t color);
 // Blit a sprite: each entry's bit15 set = opaque pixel (low 15 bits = color).
 void draw_sprite(int x, int y, const color_t* data, int w, int h);

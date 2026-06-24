@@ -134,17 +134,21 @@ The PSP build needs the **pspdev** toolchain (psp-gcc + pspsdk + `mksfoex` + `pa
 # install pspdev per https://github.com/pspdev/pspdev (or `brew install pspdev`),
 # then make sure psp-config is on PATH:
 make -f Makefile.psp          # one game folder per levels/*.mrg, each with an EBOOT.PBP
+make -f Makefile.psp icon     # (optional) regenerate the 144×80 Game-menu icon (needs Pillow)
 make -f Makefile.psp clean
 ```
 
 Each mod is emitted as a ready-to-run game folder,
-`release/psp/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP`. Run an `EBOOT.PBP` in the
-**PPSSPP** emulator, or on a homebrew-enabled PSP by copying the whole game folder to
-`ms0:/PSP/GAME/` on the Memory Stick — it then appears in the PSP's Game menu. The PSP
-has a single screen, so it uses the GBA single-screen layout, rendered at the LCD's
-native **480×272**. Cross accelerates, Circle/Square brake, the D-pad or analog stick
-lean/steer, and the shoulder triggers are L/R. Saves are written to the Memory Stick
-at `ms0:/PSP/SAVEDATA/regravity_defied.sav`.
+`release/psp/ReGravity_Defied_<mod>_v<ver>/EBOOT.PBP`, with a 144×80 `ICON0.PNG`
+(generated from `assets/icon.jpg`) so the entry shows artwork in the Game menu. Run an
+`EBOOT.PBP` in the **PPSSPP** emulator, or on a homebrew-enabled PSP by copying the
+whole game folder to `ms0:/PSP/GAME/` on the Memory Stick — it then appears in the
+PSP's Game menu. The PSP has a single screen, so it uses the GBA single-screen layout
+(with the **interface drawn at 2× and reflowed** for the larger panel), rendered at the
+LCD's native **480×272**. Cross accelerates, Circle/Square brake, the D-pad or analog
+stick lean/steer, and the shoulder triggers are L/R — and the on-screen prompts show
+the PSP's **✗ / ◯ glyphs** instead of A/B. Saves are written to the Memory Stick at
+`ms0:/PSP/SAVEDATA/regravity_defied.sav`.
 
 > 🆕 The PSP target is new: it builds against pspsdk and packages a valid
 > `EBOOT.PBP`, but hasn't yet been verified on hardware/emulator. The GBA build
