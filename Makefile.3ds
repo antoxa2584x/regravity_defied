@@ -1,0 +1,128 @@
+# Native Nintendo 3DS / 2DS build (devkitARM + libctru).
+#
+# This is the 3DS counterpart to the GBA and DS Makefiles. It compiles the same
+# portable game code (graphics.c, level.c, physics.c, main.c, save.c) and swaps
+# the hardware backends for the 3DS ones (*_3ds.c), then links an ARM11 .elf and
+# wraps it in a homebrew .3dsx with 3dsxtool. The 3DS is a dual-screen target, so
+# it reuses the DS bottom-screen layout, and it additionally drives the top
+# screen's autostereoscopic 3D (see render_gameplay in main.c).
+#
+#   make -f Makefile.3ds          # build one .3dsx per levels/*.mrg
+#   make -f Makefile.3ds icon     # (optional) regenerate the SMDH app icon
+#   make -f Makefile.3ds clean
+#
+# Requires the devkitPro 3DS toolchain (pacman group 3ds-dev) and DEVKITPRO set.
+# If assets/icon_3ds.png exists (run `make -f Makefile.3ds icon`) and smdhtool is
+# present, the .3dsx is given a name + icon in the HOME menu; otherwise it builds
+# fine with the launcher's default icon.
+
+# Default to the standard install path so `make -f Makefile.3ds` works without an
+# explicit export; override DEVKITPRO if yours lives elsewhere.
+DEVKITPRO ?= /opt/devkitpro
+
+DEVKITARM ?= $(DEVKITPRO)/devkitARM
+LIBCTRU   := $(DEVKITPRO)/libctru
+
+# The 3DS toolchain (libctru + 3dstools) is a separate package from devkitARM.
+# Fail early with the install command rather than a confusing missing-header error.
+ifeq ($(wildcard $(LIBCTRU)/include/3ds.h),)
+$(error libctru not found at $(LIBCTRU). Install the 3DS toolchain: sudo dkp-pacman -S 3ds-dev  (set DEVKITPRO if not at /opt/devkitpro))
+endif
+
+PREFIX    := $(DEVKITARM)/bin/arm-none-eabi-
+CC        := $(PREFIX)gcc
+PYTHON    ?= python3
+TDSXTOOL  := $(DEVKITPRO)/tools/bin/3dsxtool
+SMDHTOOL  := $(DEVKITPRO)/tools/bin/smdhtool
+
+TARGET  = ReGravity_Defied
+VERSION = 1.0
+
+SRC_DIR    = src
+BUILD_DIR  = build_3ds
+LEVELS_DIR = levels
+
+# One .3dsx per levels/*.mrg, mirroring the GBA/DS builds' per-mod ROMs.
+LEVEL_FILES = $(wildcard $(LEVELS_DIR)/*.mrg)
+MODS = $(patsubst $(LEVELS_DIR)/%.mrg,%,$(LEVEL_FILES))
+ROMS = $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).3dsx)
+
+# Portable game code + the 3DS hardware backends (exclude the GBA/DS backends).
+SRCS_C = $(filter-out %_gba.c %_nds.c,$(wildcard $(SRC_DIR)/*.c))
+
+# ARM11 (3DS main CPU): ARMv6K, hard-float, like the rest of the devkitPro 3DS
+# toolchain. -DPLATFORM_3DS selects the 3DS code paths in the shared headers.
+# -MMD -MP emit per-object .d header-dependency files (pulled in below), so a
+# header edit (e.g. SCREEN_WIDTH in platform.h) recompiles every dependent unit
+# instead of leaving a mismatched mix of object files.
+ARCH    = -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+CFLAGS  = $(ARCH) -O2 -Wall -fno-strict-aliasing -mword-relocations \
+          -ffunction-sections -fdata-sections -fomit-frame-pointer -MMD -MP \
+          -DPLATFORM_3DS -D__3DS__ -DGAME_VERSION='"$(VERSION)"' \
+          -I$(LIBCTRU)/include
+LDFLAGS = -specs=3dsx.specs $(ARCH) -Wl,--gc-sections -L$(LIBCTRU)/lib
+LIBS    = -lctru -lm
+
+# SMDH (HOME-menu name + icon) metadata. Built only when the icon artwork has
+# been generated (make icon) and smdhtool is available, so the base build never
+# depends on Pillow being installed.
+APP_TITLE  = ReGravity Defied
+APP_DESC   = Open-source Gravity Defied port
+APP_AUTHOR = rgaming.com.ua
+ICON       = assets/icon_3ds.png
+
+all: $(ROMS)
+
+# Generate the 48x48 SMDH icon from the source artwork (needs Pillow).
+.PHONY: icon
+icon: $(ICON)
+$(ICON): assets/icon.jpg tools/make_3ds_icon.py
+	$(PYTHON) tools/make_3ds_icon.py
+
+# Per-mod build: compile sources into build_3ds/<mod>/ with that mod's name baked
+# in, embed its level data, link the ARM11 .elf, then wrap it in a .3dsx.
+define MOD_template
+$(1)_OBJS = $$(patsubst $$(SRC_DIR)/%.c, $$(BUILD_DIR)/$(1)/%.o, $$(SRCS_C)) \
+            $$(BUILD_DIR)/$(1)/levels.o
+
+$$(BUILD_DIR)/$(1)/%.o: $$(SRC_DIR)/%.c
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(CFLAGS) -DMOD_NAME='"$(1)"' -c $$< -o $$@
+
+# Embed this mod's level data (same objcopy recipe as the GBA/DS builds, so the
+# symbol is always _binary_levels_mrg_start regardless of the mod name).
+$$(BUILD_DIR)/$(1)/levels.o: $$(LEVELS_DIR)/$(1).mrg
+	@mkdir -p $$(dir $$@)
+	cp $$< $$(BUILD_DIR)/$(1)/levels.mrg
+	cd $$(BUILD_DIR)/$(1) && $$(PREFIX)objcopy -I binary -O elf32-littlearm -B arm --rename-section .data=.rodata,alloc,load,readonly,data,contents levels.mrg levels.o
+
+$(TARGET)_$(1)_v$(VERSION).elf: $$($(1)_OBJS)
+	$$(CC) $$($(1)_OBJS) $$(LDFLAGS) $$(LIBS) -o $$@
+
+# Wrap the .elf in a .3dsx. Auto-generate the icon if it is missing (best-effort,
+# so a build without Pillow still succeeds) so the HOME menu / homebrew launcher
+# shows the app name, icon and author instead of "unknown". If smdhtool exists,
+# bake an SMDH; otherwise build plain.
+$(TARGET)_$(1)_v$(VERSION).3dsx: $(TARGET)_$(1)_v$(VERSION).elf
+	@if [ ! -f "$(ICON)" ]; then \
+	   echo "$(PYTHON) tools/make_3ds_icon.py -> $(ICON)"; \
+	   $(PYTHON) tools/make_3ds_icon.py || echo "WARN: could not generate $(ICON) (Pillow missing?); building without icon"; \
+	 fi; \
+	 if [ -f "$(ICON)" ] && [ -x "$(SMDHTOOL)" ]; then \
+	   echo "$(SMDHTOOL) --create -> $(BUILD_DIR)/$(1)/app.smdh"; \
+	   "$(SMDHTOOL)" --create "$(APP_TITLE)" "$(APP_DESC) ($(1) MOD)" "$(APP_AUTHOR)" "$(ICON)" $(BUILD_DIR)/$(1)/app.smdh; \
+	   "$(TDSXTOOL)" $$< $$@ --smdh=$(BUILD_DIR)/$(1)/app.smdh; \
+	 else \
+	   "$(TDSXTOOL)" $$< $$@; \
+	 fi
+endef
+
+$(foreach m,$(MODS),$(eval $(call MOD_template,$(m))))
+
+# Pull in the auto-generated header dependencies (created by -MMD on prior builds).
+-include $(wildcard $(BUILD_DIR)/*/*.d)
+
+clean:
+	rm -rf $(BUILD_DIR) $(foreach m,$(MODS),$(TARGET)_$(m)_v$(VERSION).elf $(TARGET)_$(m)_v$(VERSION).3dsx)
+
+.PHONY: all clean

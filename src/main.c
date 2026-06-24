@@ -12,6 +12,16 @@
 #define GAME_VERSION "0.9"
 #endif
 
+// Title text. The 3DS build adds a "3D" tag to flag its stereoscopic top
+// screen. The title is drawn in two pieces (green "Re" + black tail), so
+// TITLE_TAIL carries the suffix and TITLE_FULL is used only for width math.
+#if defined(PLATFORM_3DS)
+#define TITLE_TAIL "Gravity Defied 3D"
+#else
+#define TITLE_TAIL "Gravity Defied"
+#endif
+#define TITLE_FULL "Re" TITLE_TAIL
+
 enum State {
     STATE_INTRO,
     STATE_SPLASH,
@@ -188,7 +198,7 @@ static void deco_bike_launch(void) {
     deco_step = deco_rand(1, 3);
 }
 
-#if defined(PLATFORM_NDS)
+#if defined(DUAL_SCREEN)
 // Bottom-screen detail card for the level-select menu: the highlighted track's
 // name, best time, and a large preview of its shape — the counterpart to the
 // compact detail pane on the top screen. Targets whichever canvas is active.
@@ -281,7 +291,121 @@ static void draw_sub_screen(enum State state, const uint8_t* mrg, const uint8_t*
     gfx_target_main();
     present_sub_frame();
 }
+#endif  // DUAL_SCREEN
+
+// Per-frame HUD / finish-screen values, bundled so the 3DS stereo path can redraw
+// the playfield once per eye without threading a long argument list each time.
+typedef struct {
+    int timer, attempts;       // run timer + attempt counter (HUD)
+    int start_x, finish_x;     // progress-bar span (single-screen targets only)
+    int crash_flash;           // red impact-flash countdown on the death screen
+    int finish_time, finish_has_delta, finish_delta, finish_unlocked, finish_new_best;
+} PlayHud;
+
+// Draw the playfield (track, bike, flags) plus the gameplay HUD/overlays into the
+// active back buffer. `eye_sign` is +1 / -1 for the left / right eye on the 3DS
+// stereo path and 0 for a flat mono frame; it scales each layer's parallax via
+// stereo_px(), which is a compile-time 0 on non-3DS targets, so this collapses to
+// the original single-view render everywhere else.
+static void render_gameplay(enum State state, const uint8_t* cur_track,
+                            int cam_x, int cam_y, const PlayHud* h, int eye_sign) {
+    // Per-layer horizontal parallax: the track's near (riding) edge sits just in
+    // front of the screen plane, the bike floats further toward the viewer, and the
+    // flags pop out the most. The track's far edge recedes inside draw_track
+    // (level_set_stereo_eye), so the ribbon has real depth rather than being a card.
+    int track_dx = eye_sign * stereo_px(STEREO_DEPTH_TRACK);
+    int flag_dx  = eye_sign * stereo_px(STEREO_DEPTH_FLAG);
+    int bike_dx  = eye_sign * stereo_px(STEREO_DEPTH_BIKE);
+
+#if defined(PLATFORM_3DS)
+    level_set_stereo_eye(eye_sign);
 #endif
+    draw_track(cur_track, cam_x - track_dx, cam_y);
+    if (state == STATE_GAME || state == STATE_DEAD || state == STATE_FINISHED) {
+        int bike_ox = SCREEN_WIDTH / 2 - cam_x;
+        int bike_oy = SCREEN_HEIGHT / 2 + cam_y;
+#if defined(DUAL_SCREEN)
+        // The shadow lives on the track surface, so it takes the track's parallax
+        // (not the bike's) — in 3D the bike then visibly floats above its shadow.
+        draw_bike_shadow(&player_bike, bike_ox + track_dx, bike_oy);
+#endif
+        draw_bike(&player_bike, bike_ox + bike_dx, bike_oy);
+    }
+    // Flags last so one the rider is passing stays in front of the moto.
+    draw_track_flags(cur_track, cam_x - flag_dx, cam_y);
+
+    // HUD on top of the track so the timer stays readable. Outlined so it stays
+    // legible over track lines and the rider. The per-eye render loop has set the
+    // glyph parallax (gfx_set_text_parallax), so HUD text pops a touch toward the
+    // viewer in 3D along with everything else, while staying gentle on the eyes.
+    if (state == STATE_GAME) {
+        char time_buf[10];
+        format_time(h->timer, time_buf);
+        draw_string_outlined(10, 10, time_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
+
+        // Run counter, top-right ("x3" = on the third attempt).
+        char run_buf[16];
+        char* e = str_cat(run_buf, "x");
+        str_num(e, h->attempts);
+        draw_string_outlined(SCREEN_WIDTH - str_px_width(run_buf) - 10, 10,
+                             run_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
+    }
+
+#if !defined(DUAL_SCREEN)
+    // 10px green progress bar along the bottom: how far the front wheel has
+    // travelled from the start flag toward the finish. (On dual-screen targets
+    // this is replaced by the minimap on the second screen.)
+    if (state == STATE_GAME) {
+        int span = h->finish_x - h->start_x;
+        int front_px = get_pixel_coord(player_bike.nodes[1].x);
+        int fill = span > 0 ? ((front_px - h->start_x) * SCREEN_WIDTH) / span : 0;
+        if (fill < 0) fill = 0;
+        if (fill > SCREEN_WIDTH) fill = SCREEN_WIDTH;
+        draw_rect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 10, COLOR(3, 3, 3));
+        if (fill > 0) draw_rect(0, SCREEN_HEIGHT - 5, fill, 10, COLOR(4, 28, 4));
+    }
+#endif
+
+    // Death screen: a brief red impact flash, then the wreck stays on screen with
+    // a "CRASHED" message for the 2s hold (see STATE_DEAD).
+    if (state == STATE_DEAD) {
+        if (h->crash_flash > 0)
+            draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
+        draw_string_centered_outlined(SCREEN_HEIGHT / 2 - 12, "CRASHED",
+                                      COLOR(31, 31, 31), COLOR(0, 0, 0));
+        draw_string_centered_outlined(SCREEN_HEIGHT / 2 + 2, "A: RETRY   B: QUIT",
+                                      COLOR(31, 28, 0), COLOR(0, 0, 0));
+    }
+
+    if (state == STATE_FINISHED) {
+        // Centered modal (derived from the screen size so it sits in the middle on
+        // every target).
+        const int dw = 152, dh = 70;
+        int dx = (SCREEN_WIDTH - dw) / 2;
+        int dy = (SCREEN_HEIGHT - dh) / 2;
+        draw_rect(dx, dy, dw, dh, COLOR(31, 31, 31));
+        draw_rect(dx + 2, dy + 2, dw - 4, dh - 4, COLOR(0, 0, 0));
+        draw_string_centered(dy + 8, "FINISHED!", COLOR(31, 31, 31));
+
+        char time_buf[10];
+        format_time(h->finish_time, time_buf);
+        draw_string_centered(dy + 22, time_buf, COLOR(0, 31, 0));
+
+        // Delta vs. the previous best (omitted on a first clear).
+        if (h->finish_has_delta) {
+            char dbuf[12];
+            format_delta(h->finish_delta, dbuf);
+            // Faster = negative = green; slower = positive = red.
+            color_t dcol = h->finish_delta <= 0 ? COLOR(0, 31, 0) : COLOR(31, 8, 8);
+            draw_string_centered(dy + 34, dbuf, dcol);
+        }
+
+        if (h->finish_unlocked)
+            draw_string_centered(dy + 50, "UNLOCKED NEXT!", COLOR(0, 31, 31));
+        else if (h->finish_new_best)
+            draw_string_centered(dy + 50, "NEW BEST TIME!", COLOR(31, 31, 0));
+    }
+}
 
 int main() {
     // Bring up the display, the free-running game-clock timer, and any memory
@@ -662,7 +786,23 @@ int main() {
         // new one over it; the matching fade-in runs after present_frame below.
         if (do_fade) fade_out();
 
+        // Set when the gameplay stereo path has already presented both top-screen
+        // eyes itself, so the mono present below is skipped (3DS only; always 0
+        // elsewhere, leaving the original single present in place).
+        int top_presented = 0;
+
         if (redraw) {
+            int eye_sign = 0;   // 3DS stereo: +1 left / -1 right; 0 = flat (all other targets)
+#if defined(PLATFORM_3DS)
+            // Autostereoscopic top screen: with the 3D slider engaged, draw the
+            // whole top screen once per eye (eye_n == 2) so the track ribbon, the
+            // bike/flags and every glyph all separate in depth; with the slider off
+            // it is a single flat pass, exactly like the mono targets below.
+            int eye_n = stereo_active() ? 2 : 1;
+            for (int eye_i = 0; eye_i < eye_n; eye_i++) {
+                eye_sign = eye_n == 1 ? 0 : (eye_i ? -1 : +1);
+                gfx_set_text_parallax(eye_sign * stereo_px(STEREO_DEPTH_TEXT));
+#endif
             clear_screen(state == STATE_INTRO ? COLOR(0, 0, 0) : COLOR(31, 31, 31));
 
             if (state == STATE_INTRO) {
@@ -681,17 +821,17 @@ int main() {
                 // down together. Same styling as the league select title: "Re"
                 // green, the rest black, 2x scale, white outline for legibility.
                 int fy = float_offset(clock_ticks);
-                int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                int title_x = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
                 draw_string_scaled_outlined(title_x, 56 + fy, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
-                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 56 + fy, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 56 + fy, TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
                 if (MOD_NAME[0]) {
                     char mbuf[24];
                     char* me = str_cat(mbuf, MOD_NAME);
                     str_cat(me, " MOD");
                     draw_string_centered_outlined(78 + fy, mbuf, COLOR(0, 20, 0), COLOR(31, 31, 31));
                 }
-#if !defined(PLATFORM_NDS)
-                // On the DS the prompt lives centered on the bottom screen instead.
+#if !defined(DUAL_SCREEN)
+                // On dual-screen targets the prompt lives centered on the bottom screen instead.
                 if (blink) draw_string_centered_outlined(120, "PRESS START", COLOR(0, 0, 0), COLOR(31, 31, 31));
 #endif
             } else if (state == STATE_MENU_HARDNESS) {
@@ -701,9 +841,9 @@ int main() {
                 draw_checker_bg(clock_ticks / CHECKER_TICKS);   // animated semi-transparent checkered flag
                 // Title "ReGravity Defied": "Re" green, the rest black, centered. 2x scale.
                 // White 1px outline keeps it readable over the checkered backdrop.
-                int title_x = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                int title_x = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
                 draw_string_scaled_outlined(title_x, 18, "Re", COLOR(0, 31, 0), COLOR(31, 31, 31), 2);
-                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, "Gravity Defied", COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
+                draw_string_scaled_outlined(title_x + str_px_width("Re") * 2, 18, TITLE_TAIL, COLOR(0, 0, 0), COLOR(31, 31, 31), 2);
                 // Mod label ("<mrg name> MOD") under the title, from the embedded levels file.
                 if (MOD_NAME[0]) {
                     char mbuf[24];
@@ -765,9 +905,9 @@ int main() {
                 draw_string_centered(134, "A: SELECT   UP/DOWN", COLOR(10, 10, 10));
                 draw_string_centered(146, "B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_ABOUT) {
-                int tx = (SCREEN_WIDTH - str_px_width("ReGravity Defied") * 2) / 2;
+                int tx = (SCREEN_WIDTH - str_px_width(TITLE_FULL) * 2) / 2;
                 draw_string_scaled(tx, 14, "Re", COLOR(0, 31, 0), 2);
-                draw_string_scaled(tx + str_px_width("Re") * 2, 14, "Gravity Defied", COLOR(0, 0, 0), 2);
+                draw_string_scaled(tx + str_px_width("Re") * 2, 14, TITLE_TAIL, COLOR(0, 0, 0), 2);
                 draw_string_centered(32, "VERSION " GAME_VERSION, COLOR(0, 22, 0));
                 draw_string_centered(44, "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
                 draw_string_centered(56, "GRAVITY DEFIED", COLOR(0, 0, 0));
@@ -810,7 +950,7 @@ int main() {
                 // Left rail = scrolling list of names; right pane = detail card
                 // (best time + medal + status) for the highlighted track.
                 draw_string_centered(8, "SELECT TRACK", COLOR(0, 0, 0));
-#if !defined(PLATFORM_NDS)
+#if !defined(DUAL_SCREEN)
                 draw_line(120, 22, 120, 140, COLOR(18, 18, 18));   // rail/pane divider
 #endif
 
@@ -826,13 +966,13 @@ int main() {
                 }
                 uint32_t count = read_be32(p);
                 const uint8_t* track_info = p + 4;
-#if !defined(PLATFORM_NDS)
+#if !defined(DUAL_SCREEN)
                 const char* sel_name = "";   // captured for the detail pane
 #endif
                 for (int t = 0; t < (int)count; t++) {
                     track_info += 4;
                     const char* name = (const char*)track_info;
-#if !defined(PLATFORM_NDS)
+#if !defined(DUAL_SCREEN)
                     if (t == track_idx) sel_name = name;
 #endif
 
@@ -842,9 +982,9 @@ int main() {
                         color_t color = !unlocked ? COLOR(15, 15, 15)
                                       : (t == track_idx) ? COLOR(0, 31, 0) : COLOR(8, 8, 8);
                         int y_pos = 32 + (t - (track_idx - 3)) * 14;
-#if defined(PLATFORM_NDS)
-                        // DS: the detail card lives on the bottom screen, so the
-                        // top screen shows just the track list, centered.
+#if defined(DUAL_SCREEN)
+                        // Dual-screen: the detail card lives on the bottom screen,
+                        // so the top screen shows just the track list, centered.
                         int nx = (SCREEN_WIDTH - str_px_width(name)) / 2;
                         if (t == track_idx && blink) draw_string(nx - 12, y_pos, ">", color);
                         draw_string(nx, y_pos, name, color);
@@ -862,7 +1002,7 @@ int main() {
                     track_info++;
                 }
 
-#if !defined(PLATFORM_NDS)
+#if !defined(DUAL_SCREEN)
                 // ---- Detail pane (centered on x = 180) ----
                 const int pcx = 180;
                 int sel_unlocked = track_unlocked(mrg, level_idx, track_idx);
@@ -896,91 +1036,20 @@ int main() {
                 draw_string_centered(150, "A: START   B: BACK", COLOR(10, 10, 10));
             } else if (state == STATE_GAME || state == STATE_TRACK_VIEW
                        || state == STATE_DEAD || state == STATE_FINISHED) {
-                draw_track(cur_track, cam_x, cam_y);
-                if (state == STATE_GAME || state == STATE_DEAD || state == STATE_FINISHED) {
-                    int bike_ox = SCREEN_WIDTH / 2 - cam_x;
-                    int bike_oy = SCREEN_HEIGHT / 2 + cam_y;
-#if defined(PLATFORM_NDS)
-                    // Shadow on the track (NDS only): a terrain-following line
-                    // under the bike, fading as it lifts off — matching the
-                    // reference GameLevel::renderShadow. Drawn before the moto.
-                    draw_bike_shadow(&player_bike, bike_ox, bike_oy);
-#endif
-                    draw_bike(&player_bike, bike_ox, bike_oy);
-                }
-                // Flags last so one the rider is passing stays in front of the moto.
-                draw_track_flags(cur_track, cam_x, cam_y);
-
-                // HUD on top of the track so the timer stays readable. Outlined
-                // so it stays legible over track lines and the rider.
-                if (state == STATE_GAME) {
-                    char time_buf[10];
-                    format_time(timer, time_buf);
-                    draw_string_outlined(10, 10, time_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
-
-                    // Run counter, top-right ("x3" = on the third attempt).
-                    char run_buf[16];
-                    char* e = str_cat(run_buf, "x");
-                    str_num(e, attempts);
-                    draw_string_outlined(SCREEN_WIDTH - str_px_width(run_buf) - 10, 10,
-                                         run_buf, COLOR(0, 0, 0), COLOR(31, 31, 31));
-                }
-
-#if !defined(PLATFORM_NDS)
-                // 10px green progress bar along the bottom: how far the front
-                // wheel has travelled from the start flag toward the finish.
-                // (On the DS this is replaced by the minimap on the second screen.)
-                if (state == STATE_GAME) {
-                    int span = finish_x - start_x;
-                    int front_px = get_pixel_coord(player_bike.nodes[1].x);
-                    int fill = span > 0 ? ((front_px - start_x) * SCREEN_WIDTH) / span : 0;
-                    if (fill < 0) fill = 0;
-                    if (fill > SCREEN_WIDTH) fill = SCREEN_WIDTH;
-                    draw_rect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 10, COLOR(3, 3, 3));
-                    if (fill > 0) draw_rect(0, SCREEN_HEIGHT - 5, fill, 10, COLOR(4, 28, 4));
-                }
-#endif
-
-                // Death screen: a brief red impact flash, then the wreck stays on
-                // screen with a "CRASHED" message for the 2s hold (see STATE_DEAD).
-                if (state == STATE_DEAD) {
-                    if (crash_flash > 0)
-                        draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR(28, 0, 0));
-                    draw_string_centered_outlined(SCREEN_HEIGHT / 2 - 12, "CRASHED",
-                                                  COLOR(31, 31, 31), COLOR(0, 0, 0));
-                    draw_string_centered_outlined(SCREEN_HEIGHT / 2 + 2, "A: RETRY   B: QUIT",
-                                                  COLOR(31, 28, 0), COLOR(0, 0, 0));
-                }
-
-                if (state == STATE_FINISHED) {
-                    // Centered modal (derived from the screen size so it sits in
-                    // the middle on both the GBA 240x160 and the DS 256x192).
-                    const int dw = 152, dh = 70;
-                    int dx = (SCREEN_WIDTH - dw) / 2;
-                    int dy = (SCREEN_HEIGHT - dh) / 2;
-                    draw_rect(dx, dy, dw, dh, COLOR(31, 31, 31));
-                    draw_rect(dx + 2, dy + 2, dw - 4, dh - 4, COLOR(0, 0, 0));
-                    draw_string_centered(dy + 8, "FINISHED!", COLOR(31, 31, 31));
-
-                    char time_buf[10];
-                    format_time(finish_time, time_buf);
-                    draw_string_centered(dy + 22, time_buf, COLOR(0, 31, 0));
-
-                    // Delta vs. the previous best (omitted on a first clear).
-                    if (finish_has_delta) {
-                        char dbuf[12];
-                        format_delta(finish_delta, dbuf);
-                        // Faster = negative = green; slower = positive = red.
-                        color_t dcol = finish_delta <= 0 ? COLOR(0, 31, 0) : COLOR(31, 8, 8);
-                        draw_string_centered(dy + 34, dbuf, dcol);
-                    }
-
-                    if (finish_unlocked)
-                        draw_string_centered(dy + 50, "UNLOCKED NEXT!", COLOR(0, 31, 31));
-                    else if (finish_new_best)
-                        draw_string_centered(dy + 50, "NEW BEST TIME!", COLOR(31, 31, 0));
-                }
+                PlayHud hud = { timer, attempts, start_x, finish_x, crash_flash,
+                                finish_time, finish_has_delta, finish_delta,
+                                finish_unlocked, finish_new_best };
+                // The enclosing per-eye loop (3DS) supplies eye_sign and re-clears
+                // for each eye; the layer parallax happens inside render_gameplay.
+                render_gameplay(state, cur_track, cam_x, cam_y, &hud, eye_sign);
             }
+#if defined(PLATFORM_3DS)
+            // Push this eye's finished frame to its own top framebuffer. With the
+            // slider off (eye_n == 1) fall through to the mono present below instead.
+            if (eye_n == 2) { present_frame_top(eye_i); top_presented = 1; }
+            }   // per-eye loop
+            gfx_set_text_parallax(0);   // bottom screen and the next frame draw flat
+#endif
         }
 
         // All drawing above went to the off-screen back buffer (no beam race).
@@ -988,12 +1057,12 @@ int main() {
         // outruns the scan beam, so nothing tears. Skip the copy when we did
         // not redraw: VRAM already holds the last presented frame.
         platform_vsync();
-        if (redraw) present_frame();
-#if defined(PLATFORM_NDS)
+        if (redraw && !top_presented) present_frame();
+#if defined(DUAL_SCREEN)
         // Compose and present the bottom screen from the same redraw decision as
         // the top, so it stays in step (and idle screens stay cheap).
         // The minimap doesn't need 60 Hz; refresh the bottom screen every 3rd
-        // gameplay frame so the ARM9 budget stays with the playfield. Menus and
+        // gameplay frame so the CPU budget stays with the playfield. Menus and
         // the finish screen present on their (already gated) redraws.
         int sub_throttled = (state == STATE_GAME || state == STATE_DEAD) && (frame % 3 != 0);
         if (redraw && !sub_throttled)

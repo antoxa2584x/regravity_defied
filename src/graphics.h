@@ -32,6 +32,11 @@ void draw_string_outlined(int x, int y, const char* str, color_t fg, color_t out
 void draw_string_scaled(int x, int y, const char* str, color_t color, int scale);
 // Scaled string with a 1px outline in `outline` behind `fg`.
 void draw_string_scaled_outlined(int x, int y, const char* str, color_t fg, color_t outline, int scale);
+// Horizontal parallax (px) added to every glyph drawn until the next call. Used
+// by the 3DS per-eye render loop to separate text in depth on the stereoscopic
+// top screen; left at 0 (the default) on every other target, so text draws where
+// asked. Affects draw_char/draw_string(/_outlined) and draw_string_scaled(/_outlined).
+void gfx_set_text_parallax(int dx);
 void draw_line(int x1, int y1, int x2, int y2, color_t color);
 // Blit a sprite: each entry's bit15 set = opaque pixel (low 15 bits = color).
 void draw_sprite(int x, int y, const color_t* data, int w, int h);
@@ -40,11 +45,12 @@ void draw_sprite_frame(int x, int y, const color_t* sheet, int sheet_w,
                        int fw, int fh, int frame);
 void fill_circle(int cx, int cy, int r, color_t color);
 
-#if defined(PLATFORM_NDS)
-// DS bottom (sub) screen support. The shared drawing primitives target whichever
-// screen is active; switch with gfx_target_sub()/gfx_target_main() (main is the
-// default top screen). g_subbuf is the sub back buffer; present_sub_frame copies
-// it to the bottom screen, and gfx_clear fills whichever canvas is active.
+#if defined(DUAL_SCREEN)
+// Bottom (sub) screen support on dual-screen targets (DS and 3DS). The shared
+// drawing primitives target whichever screen is active; switch with
+// gfx_target_sub()/gfx_target_main() (main is the default top screen). g_subbuf
+// is the sub back buffer; present_sub_frame copies it to the bottom screen, and
+// gfx_clear fills whichever canvas is active.
 extern color_t g_subbuf[SCREEN_WIDTH * SCREEN_HEIGHT];
 void gfx_target_main(void);
 void gfx_target_sub(void);

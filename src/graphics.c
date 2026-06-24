@@ -78,18 +78,27 @@ extern uint16_t g_vram_buf[];
 static color_t* g_canvas = (color_t*)g_vram_buf;
 #else
 color_t g_backbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
-#if defined(PLATFORM_NDS)
-// Second back buffer for the DS bottom (sub) screen. Every drawing primitive
-// targets whichever canvas is active (g_canvas); gfx_target_sub/main switch
-// between them and present_sub_frame (graphics_nds.c) copies this to the
-// sub-engine bitmap background. Other targets have a single screen.
+#if defined(DUAL_SCREEN)
+// Second back buffer for the bottom (sub) screen on dual-screen targets (DS and
+// 3DS). Every drawing primitive targets whichever canvas is active (g_canvas);
+// gfx_target_sub/main switch between them and present_sub_frame (the per-target
+// backend) copies this to the bottom screen. Other targets have a single screen.
 color_t g_subbuf[SCREEN_WIDTH * SCREEN_HEIGHT] EWRAM_BSS;
 #endif
 static color_t* g_canvas = g_backbuf;
 #endif
 #define G_CANVAS g_canvas
 
-#if defined(PLATFORM_NDS)
+// Horizontal parallax (px) added to every glyph's X while it is drawn, so text can
+// be separated in depth on the 3DS autostereoscopic top screen: the per-eye render
+// loop sets +d / -d before each eye's pass and 0 afterwards. Zero on every other
+// target (and on the 3DS with the 3D slider off), so text draws exactly where
+// asked. Applied in draw_char and draw_string_scaled, the two glyph rasterisers
+// every text helper funnels through.
+static int g_text_dx;
+void gfx_set_text_parallax(int dx) { g_text_dx = dx; }
+
+#if defined(DUAL_SCREEN)
 void gfx_target_main(void) { g_canvas = g_backbuf; }
 void gfx_target_sub(void)  { g_canvas = g_subbuf; }
 
@@ -147,7 +156,7 @@ IWRAM_FN void draw_char(int x, int y, char c, color_t color) {
     color_t* canvas = G_CANVAS;
     for (int col = 0; col < 5; col++) {
         uint8_t bits = g[col];
-        int px = x + col;
+        int px = x + col + g_text_dx;
         if ((unsigned)px >= SCREEN_WIDTH) continue;
         for (int row = 0; bits; row++, bits >>= 1) {
             if (bits & 1) {
@@ -177,7 +186,7 @@ IWRAM_FN void draw_string_scaled(int x, int y, const char* str, color_t color, i
             const uint8_t* g = &font5x7[(c - 32) * 5];
             for (int col = 0; col < 5; col++) {
                 uint8_t bits = g[col];
-                int bx = x + col * scale;
+                int bx = x + col * scale + g_text_dx;
                 for (int row = 0; bits; row++, bits >>= 1) {
                     if (!(bits & 1)) continue;
                     int by = y + row * scale;

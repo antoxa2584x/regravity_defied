@@ -51,4 +51,11 @@ const char* get_track_name(const uint8_t* mrg, int league, int track);
 // ribbon surface.
 void project_track_center(int32_t ix, int32_t iy, int ox, int oy, int* cx, int* cy);
 
+#if defined(PLATFORM_3DS)
+// Select the eye (+1 left / -1 right; 0 = mono) for the next draw_track call, so
+// it can give the isometric ribbon real depth (the far edge recedes behind the
+// near edge per eye). No-op effect when the 3D slider is off (stereo_px == 0).
+void level_set_stereo_eye(int eye_sign);
+#endif
+
 #endif // LEVEL_H

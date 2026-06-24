@@ -256,6 +256,17 @@ IWRAM_FN static int fast_hypot(int x, int y) {
 #define RIBBON_DEPTH   16   // ribbon width in pixels
 #define EYE_HEIGHT     90   // eye distance above screen center
 
+#if defined(PLATFORM_3DS)
+// Stereo state for the isometric-depth track (3DS only). render_gameplay sets the
+// current eye (+1 left / -1 right; 0 = mono) before drawing the track; draw_track
+// then pushes the far ribbon edge back by s_ribbon_dx for the duration of the
+// ribbon pass, so the surface slopes into the screen instead of reading as a flat
+// card. Cleared before the flag poles so they keep their own (uniform) depth.
+static int s_stereo_eye;   // current eye sign
+static int s_ribbon_dx;    // far-edge horizontal parallax, active only during the ribbon
+void level_set_stereo_eye(int eye_sign) { s_stereo_eye = eye_sign; }
+#endif
+
 // Project an internal track point to its near (riding) and far (ribbon) screen
 // coordinates. Returns near in (*nx,*ny), far in (*fx,*fy).
 IWRAM_FN static void project_point(int32_t ix, int32_t iy, int ox, int oy,
@@ -272,6 +283,9 @@ IWRAM_FN static void project_point(int32_t ix, int32_t iy, int ox, int oy,
     *ny = sy;
     *fx = sx + ddx * RIBBON_DEPTH / m;
     *fy = sy + ddy * RIBBON_DEPTH / m;
+#if defined(PLATFORM_3DS)
+    *fx += s_ribbon_dx;   // recede the far edge in stereo (0 outside the ribbon pass)
+#endif
 }
 
 void project_track_center(int32_t ix, int32_t iy, int ox, int oy, int* cx, int* cy) {
@@ -341,6 +355,12 @@ IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
     int ox = SCREEN_WIDTH / 2 - cam_x;
     int oy = SCREEN_HEIGHT / 2 + cam_y;
 
+#if defined(PLATFORM_3DS)
+    // Push the far ribbon edge behind the near edge for this eye, so the isometric
+    // surface reads as a slope receding into the screen rather than a flat plane.
+    s_ribbon_dx = -s_stereo_eye * stereo_px(STEREO_DEPTH_RIBBON);
+#endif
+
     // Window of points whose segments can touch the screen. Start one point to
     // the left so the segment entering from off-screen is drawn.
     int start = first_point_at(px, g->count, ox, -RIBBON_DEPTH);
@@ -366,6 +386,10 @@ IWRAM_FN void draw_track(const uint8_t* data, int cam_x, int cam_y) {
 
         pnx = nnx; pny = nny; pfx = nfx; pfy = nfy;
     }
+
+#if defined(PLATFORM_3DS)
+    s_ribbon_dx = 0;   // flag poles below sit at their own depth, not the ribbon's
+#endif
 
     // Far (ribbon-side) poles draw with the track, behind the moto.
     draw_flag_layer(g, ox, oy, 0);

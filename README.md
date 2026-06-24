@@ -4,12 +4,13 @@
 
 ### An open-source Game Boy Advance port of the classic J2ME motorcycle-trials game **Gravity Defied**
 
-Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), plus a native **Nintendo DS / DSi** build on devkitARM + libnds, both driven from one shared game core.
+Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), plus native **Nintendo DS / DSi** (devkitARM + libnds) and **Nintendo 3DS / 2DS** (devkitARM + libctru, with stereoscopic 3D) builds, all driven from one shared game core.
 
 <br/>
 
 ![Platform](https://img.shields.io/badge/platform-Game%20Boy%20Advance-8B5CF6?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Nintendo%20DS%20%C2%B7%20DSi-E60012?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Nintendo%203DS%20%C2%B7%202DS-D12228?style=flat-square)
 ![Language](https://img.shields.io/badge/language-C-00599C?style=flat-square&logo=c)
 ![Toolchain](https://img.shields.io/badge/toolchain-arm--none--eabi--gcc-A42E2B?style=flat-square)
 ![Mode](https://img.shields.io/badge/video-240%C3%97160%20%C2%B7%20256%C3%97192-1f6feb?style=flat-square)
@@ -35,7 +36,7 @@ Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), 
 | 🔊 **Sound** | Crash SFX via DirectSound. |
 | ⚙️ **Settings** | Pick tilt buttons (D-pad or L/R shoulders), toggle sound, reset progress (with confirmation), and an About screen. |
 | 🧩 **Mod packs** | Drop a `levels/*.mrg` file in and the build spits out a separate ROM with the mod name baked onto the menu. |
-| 🎯 **Two targets** | One portable game core behind a small platform layer — builds a bare-metal **GBA** `.gba` and a native **DS/DSi** `.nds`. |
+| 🎯 **Three targets** | One portable game core behind a small platform layer — builds a bare-metal **GBA** `.gba`, a native **DS/DSi** `.nds`, and a native **3DS/2DS** `.3dsx` with stereoscopic 3D. |
 
 ---
 
@@ -92,6 +93,36 @@ hardware — flashcart on DS/DS Lite, or directly on a homebrew-enabled **DSi/3D
 > hasn't yet been verified on hardware/emulator. The GBA build remains the primary,
 > battle-tested target.
 
+### 5 · Build & play (Nintendo 3DS / 2DS — with stereoscopic 3D)
+
+The 3DS build needs the **devkitPro** 3DS toolchain (devkitARM + libctru):
+
+```bash
+# install devkitPro pacman per https://devkitpro.org/wiki/Getting_Started, then:
+sudo dkp-pacman -S 3ds-dev
+export DEVKITPRO=/opt/devkitpro
+
+make -f Makefile.3ds          # one .3dsx per levels/*.mrg  →  ReGravity_Defied_<mod>.3dsx
+make -f Makefile.3ds icon     # (optional) generate the HOME-menu app icon (needs Pillow)
+make -f Makefile.3ds clean
+```
+
+Run a `ReGravity_Defied_*.3dsx` in **Citra** or on a homebrew-enabled 3DS/2DS (copy
+to the SD card and launch from the Homebrew Launcher). Saves are written to the SD
+card root as `regravity_defied.sav`.
+
+The 3DS is the second **dual-screen** target, so it reuses the DS layout — the
+track-detail card and the in-game progress minimap live on the bottom screen.
+On top of that it drives the **autostereoscopic top screen**: the flat 2D scene is
+rendered once per eye with per-layer horizontal parallax (the track sits at the
+screen plane, the bike floats toward you, and the flags pop out the most — a
+pop-up-book depth). Slide the **3D slider** up to dial in the effect; at zero the
+image is a comfortable flat 2D. The Circle Pad mirrors the D-pad for steering.
+
+> 🆕 The 3DS target is new: it builds against libctru and packages a valid `.3dsx`,
+> but hasn't yet been verified on hardware/emulator. The GBA build remains the
+> primary, battle-tested target.
+
 ---
 
 ## 🎮 Controls
@@ -111,7 +142,8 @@ hardware — flashcart on DS/DS Lite, or directly on a homebrew-enabled **DSi/3D
 ## 🗂️ Project Structure
 
 Portable game code shares a small **platform layer** (`platform.h`); each target
-swaps in its own hardware backends — `*_gba.c` for the GBA, `*_nds.c` for the DS.
+swaps in its own hardware backends — `*_gba.c` for the GBA, `*_nds.c` for the DS,
+`*_3ds.c` for the 3DS.
 
 ```
 src/
@@ -133,10 +165,15 @@ src/
 ├── platform_nds.c  DS: LCDC framebuffer, DS timer, libnds key read
 ├── graphics_nds.c  DS: full-screen back-buffer→VRAM blit + brightness fades
 ├── sound_nds.c     DS: libnds soundPlaySample SFX
-└── save_nds.c      DS: SD-card save file via libfat
+├── save_nds.c      DS: SD-card save file via libfat
+│
+├── platform_3ds.c  3DS: libctru gfx init, stereo 3D, system-tick timer, key + Circle Pad read
+├── graphics_3ds.c  3DS: BGR555→RGB565 rotated present (per-eye stereo) + software fades
+├── sound_3ds.c     3DS: libctru ndsp SFX
+└── save_3ds.c      3DS: SD-card save file via stdio
 gba.ld              GBA linker script
-Makefile            GBA build      ·    Makefile.nds   DS/DSi build
-assets/             source PNGs + sound/ + icon.jpg; tools/*.py bake them into headers / the DS banner icon
+Makefile   GBA build   ·   Makefile.nds   DS/DSi build   ·   Makefile.3ds   3DS/2DS build
+assets/             source PNGs + sound/ + icon.jpg; tools/*.py bake them into headers / the DS & 3DS icons
 levels/*.mrg        track-data mod packs — one ROM is built per file
 ```
 
@@ -149,23 +186,26 @@ Each `levels/<name>.mrg` is compiled into its own `build/<name>/` directory with
 `ReGravity_Defied_<name>.gba`. The mod name shows up on the league screen, so you
 can ship a `classic` ROM, a `1000`-track ROM, or your own pack side by side.
 
-`Makefile.nds` mirrors this exactly for the DS, producing one `.nds` per mod.
+`Makefile.nds` and `Makefile.3ds` mirror this exactly for the DS and 3DS,
+producing one `.nds` / `.3dsx` per mod.
 
 ---
 
-## 🎯 GBA vs. DS — what differs
+## 🎯 GBA vs. DS vs. 3DS — what differs
 
-The game logic, rendering primitives, menus and physics are identical on both —
+The game logic, rendering primitives, menus and physics are identical on all three —
 only the thin hardware backends change:
 
-| | Game Boy Advance | Nintendo DS / DSi |
-|---|---|---|
-| **Toolchain** | bare-metal `arm-none-eabi`, custom `crt0.s` + `gba.ld` | devkitARM + libnds + calico |
-| **CPU** | ARM7TDMI @ 16.78 MHz | ARM9 @ 67 MHz (+ ARM7 for sound) |
-| **Display** | Mode 3 bitmap, DMA blit | LCDC framebuffer, rendered at native 256×192 full-screen (bottom screen black) |
-| **Frame timing** | fixed 60 Hz sim; ~30 fps render | fixed 60 Hz sim; 60 fps render |
-| **Sound** | DirectSound FIFO (hand-fed) | `soundPlaySample` (ARM7) |
-| **Save** | battery SRAM | `regravity.sav` on SD via libfat |
+| | Game Boy Advance | Nintendo DS / DSi | Nintendo 3DS / 2DS |
+|---|---|---|---|
+| **Toolchain** | bare-metal `arm-none-eabi`, custom `crt0.s` + `gba.ld` | devkitARM + libnds + calico | devkitARM + libctru |
+| **CPU** | ARM7TDMI @ 16.78 MHz | ARM9 @ 67 MHz (+ ARM7 for sound) | ARM11 @ 268 MHz |
+| **Display** | Mode 3 bitmap, DMA blit | LCDC framebuffer, native 256×192 full-screen | 320×240 centered on the 400-wide top screen; BGR555→RGB565 rotated present |
+| **Second screen** | — | detail card + in-game minimap | detail card + in-game minimap |
+| **Stereoscopic 3D** | — | — | per-layer parallax, rendered once per eye, scaled by the 3D slider |
+| **Frame timing** | fixed 60 Hz sim; ~30 fps render | fixed 60 Hz sim; 60 fps render | fixed 60 Hz sim; 60 fps render |
+| **Sound** | DirectSound FIFO (hand-fed) | `soundPlaySample` (ARM7) | libctru `ndsp` |
+| **Save** | battery SRAM | `regravity.sav` on SD via libfat | `regravity_defied.sav` on SD via stdio |
 
 ---
 
