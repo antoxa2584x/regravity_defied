@@ -27,17 +27,20 @@ Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), 
 
 | | |
 |---|---|
+| 🎯 **Four targets, one core** | A portable game core behind a small platform layer builds a bare-metal **GBA** `.gba`, a native **DS/DSi** `.nds`, a **3DS/2DS** `.3dsx`, and a **Sony PSP** `EBOOT.PBP` — identical physics, menus, and progression on all four. |
 | 🏁 **Authentic physics** | Verlet-integrated bike dynamics ported from the original — 3 engine leagues (**100cc · 175cc · 220cc**). |
 | 🧍 **Articulated rider** | A jointed sprite (legs, torso, arm, helmet) that leans with the bike. |
-| 🎞️ **Smooth rendering** | Double-buffered Mode 3 renderer with a fixed **60 Hz** simulation fully decoupled from the frame rate. |
+| 🎞️ **Native-res rendering** | Software rasteriser into a per-target framebuffer, fixed **60 Hz** simulation fully decoupled from the frame rate, filling each screen 1:1 — **240×160** (GBA), **256×192** (DS), **400×240** (3DS), **480×272** (PSP). |
+| 🖥️ **Dual-screen** | On DS and 3DS the bottom screen carries the track-detail card and a live in-game progress **minimap** instead of crowding the playfield. |
+| 🥽 **Stereoscopic 3D** | The 3DS top screen renders once per eye with per-layer parallax (track, bike, flags pop at different depths), dialed in live by the **3D slider**. |
+| 🎨 **Customization** | Recolor the helmet, rider suit, and bike from a shared palette, with a live preview; choices persist with your save. |
 | 🔓 **Progression** | The first track is open by default; finishing a track unlocks the next, and clearing a league unlocks the next league. |
-| ⏱️ **Best times** | Per-track scoreboard saved to battery-backed **SRAM**. |
-| 📍 **Smart cursor** | The level screen remembers and scrolls back to the **last track you opened** in each league — also persisted to SRAM. |
-| ⚡ **Fast navigation** | Hold the D-pad to auto-scroll long league/level lists. |
-| 🔊 **Sound** | Crash SFX via DirectSound. |
+| ⏱️ **Best times & cursor** | Per-track scoreboard plus the last track opened per league, persisted per platform — GBA battery **SRAM**, or an SD-card / Memory Stick save file on DS/3DS/PSP. |
+| ⚡ **Fast navigation** | Hold Up/Down (or the analog stick) to auto-scroll long league/level lists. |
+| 🔊 **Sound** | Crash SFX on every target — GBA DirectSound, DS ARM7 `soundPlaySample`, 3DS `ndsp`, PSP `sceAudio`. |
 | ⚙️ **Settings** | Pick tilt buttons (D-pad or L/R shoulders), toggle sound, reset progress (with confirmation), and an About screen. |
-| 🧩 **Mod packs** | Drop a `levels/*.mrg` file in and the build spits out a separate ROM with the mod name baked onto the menu. |
-| 🎯 **Four targets** | One portable game core behind a small platform layer — builds a bare-metal **GBA** `.gba`, a native **DS/DSi** `.nds`, a native **3DS/2DS** `.3dsx` with stereoscopic 3D, and a **Sony PSP** `EBOOT.PBP`. |
+| 🎛️ **Platform-aware UI** | Menus center and scale to each screen — the PSP draws the interface at 2× and shows its **✗ / ◯** buttons in prompts instead of A/B. |
+| 🧩 **Mod packs** | Drop a `levels/*.mrg` file in and each build emits a separate ROM per mod with its name baked onto the menu. |
 
 ---
 

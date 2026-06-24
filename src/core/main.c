@@ -9,7 +9,7 @@
 
 // Game version string, normally baked in by the Makefile (-DGAME_VERSION).
 #ifndef GAME_VERSION
-#define GAME_VERSION "0.9"
+#define GAME_VERSION "1.0"
 #endif
 
 // Title text. The 3DS build adds a "3D" tag to flag its stereoscopic top
@@ -952,7 +952,7 @@ int main() {
                 draw_string_centered(VY(44), "OPEN SOURCE PORT OF", COLOR(10, 10, 10));
                 draw_string_centered(VY(56), "GRAVITY DEFIED", COLOR(0, 0, 0));
                 draw_string_centered(VY(86), "GITHUB.COM/ANTOXA2584X", COLOR(0, 22, 0));
-                draw_string_centered(VY(98), "/REGRAVITY_DEFIED_GBA", COLOR(0, 22, 0));
+                draw_string_centered(VY(98), "/REGRAVITY_DEFIED", COLOR(0, 22, 0));
                 if (cheat_done)
                     draw_string_centered(VY(120), "ALL LEVELS UNLOCKED!", COLOR(0, 31, 0));
                 draw_string_centered(VY(140), BTN_B ": BACK", COLOR(10, 10, 10));

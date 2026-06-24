@@ -21,6 +21,14 @@
 #define CHUNK 1024                                  // frames per SRC output call (multiple of 64)
 #define FRAMES (((WILHELM_LEN + CHUNK - 1) / CHUNK) * CHUNK)  // clip rounded up to whole chunks
 
+// Input rate handed to the sample-rate converter. The clip is sampled at
+// SOUND_SAMPLE_RATE (16384 Hz, a GBA-timer-friendly power of two), but the PSP's
+// SRC channel only accepts a fixed set of standard rates — 8000/11025/12000/
+// 16000/22050/24000/32000/44100/48000 — and rejects 16384, which made
+// sceAudioSRCChReserve fail and left the crash SFX silent. 16000 is the nearest
+// supported rate; the resulting ~2.4% pitch shift on a one-shot scream is inaudible.
+#define PSP_SRC_RATE 16000
+
 static short* g_clip;           // 16-bit stereo, SOUND_SAMPLE_RATE, FRAMES frames (zero-padded tail)
 static volatile int g_play;     // set by sound_play_crash, consumed by the worker
 static int g_ok;                // 1 once the clip and worker thread are ready
@@ -33,9 +41,10 @@ static int audio_thread(SceSize args, void* argp) {
         while (!g_play) sceKernelDelayThread(2000);
         g_play = 0;
 
-        // Reserve the SRC channel at the clip's rate; the hardware converts to its
-        // native 44.1 kHz. Skip this playthrough if the channel is unavailable.
-        if (sceAudioSRCChReserve(CHUNK, SOUND_SAMPLE_RATE, 2) < 0) continue;
+        // Reserve the SRC channel at a PSP-supported rate (see PSP_SRC_RATE); the
+        // hardware converts it up to its native 44.1 kHz output. Skip this
+        // playthrough if the channel is unavailable.
+        if (sceAudioSRCChReserve(CHUNK, PSP_SRC_RATE, 2) < 0) continue;
         for (int frame = 0; frame < FRAMES; frame += CHUNK)
             sceAudioSRCOutputBlocking(PSP_AUDIO_VOLUME_MAX, g_clip + frame * 2);
         sceAudioSRCChRelease();

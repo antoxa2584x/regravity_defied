@@ -561,11 +561,19 @@ IWRAM_FN static int step_solver(int total) {
     int started = field_68;
     int var3 = 0;
     int var4 = total;
+    // Overall backstop: when a collision keeps reporting penetration (r == 0), the
+    // step is halved and retried via label77 without var3 advancing, so a pose the
+    // solver can't separate would re-enter forever (the other half of the on-crash
+    // freeze). A normal step needs only a handful of integrate() passes, so cap the
+    // total and bail well before it is noticeable — the inner contact loop is
+    // bounded above, this bounds the substep search.
+    int budget = 0;
 
 label77:
     do {
         int r;
         while (var3 < total) {
+            if (++budget > 4096) return 5;
             integrate(var4 - var3);
             if (!started && reached_finish()) r = 3;
             else r = collide_all(index10);
@@ -580,10 +588,18 @@ label77:
             } else {
                 if (r == 1) {
                     int rr;
+                    // Resolve overlapping contacts until collide_all reports a clean
+                    // separation (rr == 2). On a hard crash the moto's nodes can wedge
+                    // into a degenerate, mutually-penetrating pose the response never
+                    // settles, where rr stays 1/3 forever — that hung the whole game
+                    // (intermittently, on every platform). Cap the iterations: normal
+                    // contacts converge in a few passes, so bailing after 64 only ever
+                    // affects an already-crashing bike, and the loop can no longer hang.
+                    int guard = 0;
                     do {
                         collide_response(index10);
                         if ((rr = collide_all(index10)) == 0) return 5;
-                    } while (rr != 2);
+                    } while (rr != 2 && ++guard < 64);
                 }
                 var3 = var4;
                 var4 = total;
