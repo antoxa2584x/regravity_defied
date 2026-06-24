@@ -2,7 +2,7 @@
 
 # 🏍️ ReGravity Defied
 
-### An open-source Game Boy Advance port of the classic J2ME motorcycle-trials game **Gravity Defied**
+### An open-source port of the classic J2ME motorcycle-trials game **Gravity Defied**
 
 Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), plus native **Nintendo DS / DSi** (devkitARM + libnds), **Nintendo 3DS / 2DS** (devkitARM + libctru, with stereoscopic 3D), and **Sony PSP** (pspdev / pspsdk) builds, all driven from one shared game core.
 
