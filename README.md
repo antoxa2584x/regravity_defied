@@ -12,9 +12,8 @@ Written in C — bare-metal `arm-none-eabi` on GBA (no SDK, just the hardware), 
 ![Platform](https://img.shields.io/badge/platform-Nintendo%20DS%20%C2%B7%20DSi-E60012?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Nintendo%203DS%20%C2%B7%202DS-D12228?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Sony%20PSP-003791?style=flat-square)
+
 ![Language](https://img.shields.io/badge/language-C-00599C?style=flat-square&logo=c)
-![Toolchain](https://img.shields.io/badge/toolchain-arm--none--eabi--gcc-A42E2B?style=flat-square)
-![Mode](https://img.shields.io/badge/video-240%C3%97160%20%C2%B7%20256%C3%97192%20%C2%B7%20480%C3%97272-1f6feb?style=flat-square)
 ![License](https://img.shields.io/badge/license-open%20source-22C55E?style=flat-square)
 
 🔗 **[github.com/antoxa2584x/regravity_defied](https://github.com/antoxa2584x/regravity_defied)**
